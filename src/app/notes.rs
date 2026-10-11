@@ -605,7 +605,9 @@ impl App {
     }
 
     pub fn start_new_note_with_title(&mut self, folder: String, title: String) {
-        if let Some(default_template) = self.storage.load_default_template() {
+        if self.config.features.templates.is_enabled()
+            && let Some(default_template) = self.storage.load_default_template()
+        {
             self.start_note_from_template_with_title(&default_template, folder, title);
         } else {
             self.start_blank_note_with_title(folder, title);
@@ -661,7 +663,9 @@ impl App {
     }
 
     pub fn start_note_from_template(&mut self, template: &Template, folder: String) {
-        let rendered = template.render();
+        let Some(rendered) = self.render_template_for_creation(template, &folder) else {
+            return;
+        };
         let note_title = rendered
             .title
             .clone()
@@ -676,8 +680,40 @@ impl App {
         folder: String,
         title: String,
     ) {
-        let rendered = template.render();
+        let mut template = template.clone();
+        template.title.template = None;
+        let Some(rendered) = self.render_template_for_creation(&template, &folder) else {
+            return;
+        };
         self.open_new_note_from_rendered(&folder, title.clone(), title, rendered.content);
+    }
+
+    fn render_template_for_creation(
+        &mut self,
+        template: &Template,
+        folder: &str,
+    ) -> Option<crate::templates::RenderedTemplate> {
+        let folder = if Self::is_virtual_path(folder) {
+            ""
+        } else {
+            folder
+        };
+        match self.storage.render_template_in_folder(template, folder) {
+            Ok(rendered) => {
+                if let Some(warning) = rendered.warning() {
+                    self.messages
+                        .push(warning, crate::app::messages::MessageSeverity::Warning);
+                }
+                Some(rendered)
+            }
+            Err(error) => {
+                let text = format!("Failed to render template: {error:#}");
+                self.set_temporary_status(&text);
+                self.messages
+                    .push(text, crate::app::messages::MessageSeverity::Warning);
+                None
+            }
+        }
     }
 
     fn open_new_note_from_rendered(
@@ -732,7 +768,12 @@ impl App {
     pub fn back_to_list(&mut self, prev_id: Option<&str>, new_id: Option<&str>) {
         if let Some(return_to) = self.return_mode.take() {
             self.editor.editing_id = None;
-            if self.editor.template_edit_path.is_some() {
+            if self
+                .editor
+                .template_edit_path
+                .as_ref()
+                .is_some_and(|path| !crate::templates::is_folder_template_config(path))
+            {
                 self.refresh_template_popup();
             }
             self.editor.template_edit_path = None;
@@ -772,7 +813,12 @@ impl App {
         }
         self.mode = ViewMode::List;
         self.editor.editing_id = None;
-        if self.editor.template_edit_path.is_some() {
+        if self
+            .editor
+            .template_edit_path
+            .as_ref()
+            .is_some_and(|path| !crate::templates::is_folder_template_config(path))
+        {
             self.refresh_template_popup();
         }
         self.editor.template_edit_path = None;

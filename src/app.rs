@@ -1147,6 +1147,7 @@ impl App {
         Self::is_virtual_pinned_path(path)
             || Self::is_virtual_subnotes_path(path)
             || Self::is_subnotes_parent_grid_path(path)
+            || crate::list_view::SmartFolderKind::from_virtual_path(path).is_some()
     }
 
     pub fn format_visual_item(&self, vi: usize) -> ListItem<'static> {
@@ -1707,7 +1708,22 @@ impl App {
             && self.editor.editing_id.is_none()
         {
             let mut path_to_write = path.clone();
-            if let Ok(template) = toml::from_str::<Template>(&content) {
+            let folder_config = crate::templates::is_folder_template_config(path);
+            if folder_config {
+                let validation = self
+                    .storage
+                    .check_folder_template_config_path(path)
+                    .and_then(|_| {
+                        crate::templates::FolderTemplateConfig::parse(&content).map(|_| ())
+                    });
+                if let Err(e) = validation {
+                    let err = format!("Folder template config save failed: {e:#}");
+                    self.set_temporary_status(&err);
+                    self.messages
+                        .push(err.clone(), crate::app::messages::MessageSeverity::Warning);
+                    return Err(err);
+                }
+            } else if let Ok(template) = toml::from_str::<Template>(&content) {
                 let new_path = self.storage.template_path(&template.name);
                 if new_path != *path && !new_path.exists() {
                     if let Err(e) = std::fs::rename(path, &new_path) {
@@ -1724,7 +1740,12 @@ impl App {
             }
 
             if let Err(e) = crate::fsutil::atomic_write_str(&path_to_write, &content) {
-                let err = format!("Template save failed: {e}");
+                let kind = if folder_config {
+                    "Folder template config"
+                } else {
+                    "Template"
+                };
+                let err = format!("{kind} save failed: {e}");
                 self.set_temporary_status(&err);
                 self.messages
                     .push(err.clone(), crate::app::messages::MessageSeverity::Warning);

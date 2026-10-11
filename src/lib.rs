@@ -204,6 +204,7 @@ fn run_notes(action: NotesCmd) -> Result<()> {
         }
         NotesCmd::New {
             template,
+            folder,
             body,
             no_tui,
             title,
@@ -212,45 +213,49 @@ fn run_notes(action: NotesCmd) -> Result<()> {
             let storage = storage?;
             let mut app = App::new(storage)?;
 
-            let final_title = title.unwrap_or_else(|| "New Note".to_string());
-
-            let (content, tags) = if let Some(tmpl_name) = template {
-                if let Ok(templates) = app.storage.list_templates() {
-                    if let Some(template_summary) =
-                        templates.into_iter().find(|t| t.name == tmpl_name)
-                    {
-                        if let Ok(template_data) =
-                            app.storage.load_template(&template_summary.filename)
-                        {
-                            (template_data.content.template.clone(), Vec::new())
-                        } else {
-                            eprintln!(
-                                "{}",
-                                console::error(&format!(
-                                    "Failed to load template data: {tmpl_name}"
-                                ))
-                            );
-                            process::exit(1);
-                        }
-                    } else {
-                        eprintln!(
-                            "{}",
-                            console::error(&format!("Template not found: {tmpl_name}"))
-                        );
-                        process::exit(1);
-                    }
-                } else {
-                    (String::new(), Vec::new())
+            let destination = app.storage.template_folder_path(&folder)?;
+            let folder = destination
+                .strip_prefix(std::fs::canonicalize(&app.storage.notes_dir)?)?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let rendered = if let Some(tmpl_name) = template {
+                anyhow::ensure!(
+                    app.config.features.templates.is_enabled(),
+                    "Templates disabled ([features] templates = false)"
+                );
+                let summary = app
+                    .storage
+                    .list_templates()?
+                    .into_iter()
+                    .find(|t| t.name == tmpl_name)
+                    .with_context(|| format!("Template not found: {tmpl_name}"))?;
+                let mut template = app.storage.load_template(&summary.filename)?;
+                // Explicit CLI arguments are literal, not template input.
+                if title.is_some() {
+                    template.title.template = None;
                 }
+                if body.is_some() {
+                    template.content.template.clear();
+                }
+                Some(app.storage.render_template_in_folder(&template, &folder)?)
             } else {
-                (String::new(), Vec::new())
+                None
             };
-            // --body overrides template content when both are given.
-            // Capture presence before `body` is moved by the `if let` below.
+            if let Some(warning) = rendered.as_ref().and_then(|r| r.warning()) {
+                eprintln!("{warning}");
+            }
+            let final_title = title
+                .or_else(|| rendered.as_ref().and_then(|r| r.title.clone()))
+                .unwrap_or_else(|| "New Note".to_string());
             let has_body = body.is_some();
-            let content = if let Some(b) = body { b } else { content };
-
-            let id = Uuid::new_v4().simple().to_string();
+            let content = body.unwrap_or_else(|| rendered.map(|r| r.content).unwrap_or_default());
+            let tags = Vec::new();
+            let stem = Uuid::new_v4().simple().to_string();
+            let id = if folder.is_empty() {
+                stem
+            } else {
+                format!("{folder}/{stem}")
+            };
             let note = Note {
                 title: final_title.clone(),
                 content,
