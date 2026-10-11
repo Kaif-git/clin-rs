@@ -89,6 +89,7 @@ const DEFAULT_EDIT: &[(EditAction, &[&str])] = &[
     (EditAction::MoveToTop, &["Ctrl+Home"]),
     (EditAction::MoveToBottom, &["Ctrl+End"]),
     (EditAction::ToggleMarkdownPreview, &["Ctrl+p"]),
+    (EditAction::ToggleMermaidRendering, &["Alt+m"]),
     (EditAction::TogglePreviewFullscreen, &["F11"]),
     (EditAction::ToggleZenMode, &["F8"]),
     (EditAction::ToggleWrap, &["F10"]),
@@ -777,6 +778,28 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use strum::IntoEnumIterator;
+
+    #[test]
+    fn mermaid_toggle_is_unique_and_inherited_by_every_preset() {
+        let event = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT);
+        for preset in [
+            KeybindPreset::Default,
+            KeybindPreset::Helix,
+            KeybindPreset::Vim,
+            KeybindPreset::Emacs,
+        ] {
+            let keybinds = preset.base_keybinds();
+            assert!(keybinds.matches_edit(EditAction::ToggleMermaidRendering, &event));
+            for action in
+                EditAction::iter().filter(|action| *action != EditAction::ToggleMermaidRendering)
+            {
+                assert!(
+                    !keybinds.matches_edit(action, &event),
+                    "{preset}/{action:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn ctrl_shift_a_matches_select_all() {

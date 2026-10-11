@@ -152,6 +152,10 @@ const EDITOR_SUGGESTIONS: &[HelpSuggestion] = &[
         "Press {edit:ToggleMarkdownPreview} to toggle a side-by-side **live preview** of your rendered markdown note. Mermaid flowchart fences render as read-only terminal diagrams; keep editing their source in the body. Scrolling follows source positions even when wrapping or diagram heights differ. Invalid or oversized diagrams show source with a diagnostic; visual substitutions are explained.",
     ),
     tip(
+        "Mermaid diagrams",
+        "Press {edit:ToggleMermaidRendering} to toggle all Mermaid blocks in the main edit preview between **diagrams** and ordinary **code blocks**. Rendering defaults on; this preference lasts for the current session. Note source stays unchanged.",
+    ),
+    tip(
         "External editor",
         "Press {list:ToggleExternalEditor} from the list to launch your external `` $EDITOR `` (like Vim or Nano) for heavy editing.",
     ),

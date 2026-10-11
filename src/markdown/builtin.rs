@@ -1171,7 +1171,7 @@ fn render_code_block(
         String::new()
     };
 
-    if is_fenced && lang.eq_ignore_ascii_case("mermaid") {
+    if ctx.opts.render_mermaid && is_fenced && lang.eq_ignore_ascii_case("mermaid") {
         let columns = u16::try_from(ctx.cols.saturating_sub(margin)).unwrap_or(u16::MAX);
         match pinstar::preview::render_mermaid(&cb.literal, columns) {
             Ok(preview) => {
@@ -1841,6 +1841,7 @@ mod tests {
         MdRenderOpts {
             syntax_hl: true,
             wrap: true,
+            render_mermaid: true,
             icon_mode,
             code_theme: default_code_theme().to_string(),
             code_line_numbers: false,
@@ -1893,6 +1894,55 @@ mod tests {
                     assert!(
                         line_text(document.line(rendered).unwrap()).contains(anchor),
                         "{columns}/{wrap}/{anchor}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_mermaid_uses_normal_code_blocks_with_source_anchors() {
+        let theme = MarkdownTheme::from_app_theme(&AppThemeColors::default());
+        let cancel = AtomicBool::new(false);
+        for literal in [
+            "flowchart TD\nA-->B",
+            "flowchart TD\nA[broken",
+            "sequenceDiagram\nA->>B: hello",
+        ] {
+            let source = format!("before\n\n```mermaid\n{literal}\n```\n\nafter");
+            for wrap in [true, false] {
+                let mut opts = mk_opts(crate::config::IconMode::default());
+                opts.render_mermaid = false;
+                opts.wrap = wrap;
+                let document = render_layout(&source, 80, &theme, &opts, &cancel)
+                    .unwrap()
+                    .document;
+                let output = document
+                    .lines()
+                    .iter()
+                    .map(line_text)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(output.contains(literal.lines().last().unwrap()), "{output}");
+                assert!(
+                    !output.contains("Mermaid flowchart") && !output.contains("showing source"),
+                    "{output}"
+                );
+                assert!(
+                    document
+                        .lines()
+                        .windows(2)
+                        .all(|pair| pair[0].source_line <= pair[1].source_line)
+                );
+                for anchor in ["before", "after"] {
+                    let line = source.lines().position(|line| line == anchor).unwrap();
+                    assert!(
+                        line_text(
+                            document
+                                .line(document.source_to_rendered_position(line, 0))
+                                .unwrap()
+                        )
+                        .contains(anchor)
                     );
                 }
             }

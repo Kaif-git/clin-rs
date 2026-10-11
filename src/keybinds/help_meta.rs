@@ -120,6 +120,9 @@ pub fn edit_action_meta(a: EditAction) -> HelpMeta {
         EditAction::MoveToBottom => meta("Editing", "Move cursor to bottom"),
         EditAction::ManageSubnotes => meta("Editing", "Manage subnotes"),
         EditAction::ToggleMarkdownPreview => meta("Preview", "Toggle markdown preview"),
+        EditAction::ToggleMermaidRendering => {
+            meta("Preview", "Toggle Mermaid diagrams / code blocks")
+        }
         EditAction::TogglePreviewFullscreen => meta("Preview", "Toggle preview fullscreen"),
         EditAction::ToggleZenMode => meta("Display", "Toggle zen mode (hide bars, pad text)"),
         EditAction::ToggleWrap => meta("Editing", "Toggle word wrap (editor and preview)"),

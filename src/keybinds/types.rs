@@ -100,6 +100,7 @@ pub enum EditAction {
     MoveToTop,
     MoveToBottom,
     ToggleMarkdownPreview,
+    ToggleMermaidRendering,
     TogglePreviewFullscreen,
     ToggleZenMode,
     ToggleWrap,

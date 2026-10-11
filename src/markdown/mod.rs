@@ -25,6 +25,7 @@ use worker::{RenderEvent, RenderJob, pack_viewport, unpack_viewport};
 pub(crate) struct MdRenderOpts {
     pub syntax_hl: bool,
     pub wrap: bool,
+    pub render_mermaid: bool,
     pub icon_mode: crate::config::IconMode,
     pub code_theme: String,
     pub code_line_numbers: bool,
@@ -38,6 +39,7 @@ impl Default for MdRenderOpts {
         Self {
             syntax_hl: true,
             wrap: true,
+            render_mermaid: true,
             icon_mode: crate::config::IconMode::default(),
             code_theme: crate::markdown::default_code_theme().to_string(),
             code_line_numbers: true,
@@ -54,6 +56,7 @@ impl MdRenderOpts {
         Self {
             syntax_hl: config.core.syntax_highlighting,
             wrap: config.core.preview_wrap,
+            render_mermaid: true,
             icon_mode: config.ui.icon_mode,
             code_theme: config.core.code_theme.clone(),
             code_line_numbers: config.core.code_line_numbers,
@@ -529,6 +532,25 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
     use std::sync::mpsc;
+
+    #[test]
+    fn mermaid_rendering_mode_is_part_of_layout_cache_key() {
+        let theme = crate::markdown::style::MarkdownTheme::from_app_theme(
+            &crate::app_theme::AppThemeColors::default(),
+        );
+        let mut opts = MdRenderOpts::default();
+        assert!(opts.render_mermaid);
+        let on = cache::RenderKey::new(
+            Arc::from("```mermaid\nA-->B\n```"),
+            80,
+            theme.clone(),
+            opts.clone(),
+        );
+        opts.render_mermaid = false;
+        let off = cache::RenderKey::new(on.content.clone(), 80, theme, opts);
+        assert_ne!(on.fingerprint, off.fingerprint);
+        assert!(on != off);
+    }
 
     #[test]
     fn test_markdown_renderer_poll_code_block_ready_incompatible() {

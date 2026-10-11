@@ -1434,6 +1434,7 @@ pub(crate) fn resolve_tip_key(token: &str, kb: &Keybinds) -> String {
         "edit" => match action {
             "InsertTab" => kb.edit_keys_display(EditAction::InsertTab),
             "ToggleMarkdownPreview" => kb.edit_keys_display(EditAction::ToggleMarkdownPreview),
+            "ToggleMermaidRendering" => kb.edit_keys_display(EditAction::ToggleMermaidRendering),
             "TogglePreviewFullscreen" => kb.edit_keys_display(EditAction::TogglePreviewFullscreen),
             "Undo" => kb.edit_keys_display(EditAction::Undo),
             "Redo" => kb.edit_keys_display(EditAction::Redo),

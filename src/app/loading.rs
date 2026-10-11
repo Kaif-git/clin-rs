@@ -1786,6 +1786,7 @@ impl App {
             self.editor.editing_id.as_deref(),
         );
         opts.wrap = self.config.editor.soft_wrap;
+        opts.render_mermaid = self.editor.mermaid_rendering_enabled;
         let height = self.desired_editor_preview_height();
         let viewport = crate::markdown::RenderViewport {
             start: renderer.visible_start(),

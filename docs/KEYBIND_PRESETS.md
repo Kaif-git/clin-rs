@@ -96,6 +96,18 @@ Emacs mappings use Ctrl-heavy bindings for navigation and Ctrl-x prefix commands
 
 Vim and Helix enable numeric count prefixes on navigation surfaces (for example `3j` or `3E`). Default and Emacs do not. Counts and sequences never apply to typing in text-input fields.
 
+## Shared Edit-View Mermaid Shortcut
+
+All presets inherit **Alt+m** for `toggle_mermaid_rendering`. Rendering starts on;
+the shortcut switches Mermaid fences in the main edit preview to/from ordinary
+code blocks without modifying note source. Preference lasts for the current
+clin session. Override under `[edit]` in your keybind file if desired.
+
+```toml
+[edit]
+toggle_mermaid_rendering = ["Alt+m"]
+```
+
 ## TOML Custom Keybind Sequence Syntax
 
 UI/help may display compact simple sequences (`gg`, `dd`, `gG`). Persisted TOML

@@ -30,9 +30,12 @@ remain immediate.
 
 Fenced `mermaid` blocks (backtick or tilde fences) render inline as read-only,
 terminal-native flowcharts through Pinstar. Edit their source in the body, not in
-an embedded canvas editor. No collapse/toggle key is needed: preview scrolling
-tracks the editor's source line and wrapped sub-row, rather than copying screen
-row numbers. Diagram height may differ from fenced-source height. Source anchors
+an embedded canvas editor. Diagrams default to **on**. **Alt+m** toggles all
+Mermaid blocks in the main edit preview between diagrams and ordinary code
+blocks, including malformed or non-flowchart blocks. This session-only preference
+resets to on when clin restarts; list and linked-note previews are unaffected.
+No collapse control is needed: preview scrolling tracks the editor's source line
+and wrapped sub-row, rather than copying screen row numbers. Diagram height may differ from fenced-source height. Source anchors
 are recalculated on resizing and wrapping changes; independent preview scrolling
 lasts until the editor anchor moves or preview content is rebuilt.
 
@@ -58,7 +61,8 @@ no temporary files containing note text are created.
 
 The current editor has **Title**, **Body**, and visible **Sidebar** focus; it has no READ/EDIT modal state or `EditMode` enum. Typing edits the focused text field directly. `Ctrl+t` cycles focus; `Tab` inserts a tab in the body. Presets change navigation outside text inputs, not the body editor.
 
-`Ctrl+p` toggles the Markdown preview and `F11` expands it. `Esc` first closes an active popup/link preview; otherwise it saves and returns directly to List. `Ctrl+s` saves without leaving.
+`Ctrl+p` toggles the Markdown preview, `Alt+m` toggles Mermaid diagram rendering,
+and `F11` expands the preview. `Esc` first closes an active popup/link preview; otherwise it saves and returns directly to List. `Ctrl+s` saves without leaving.
 
 `edit_mode_highlight` (default `true`) controls Markdown syntax highlighting over the editable body, despite its historical name. `ghost_syntax` dims Markdown delimiters, and `extended_markdown_features` enables additional syntax forms.
 
