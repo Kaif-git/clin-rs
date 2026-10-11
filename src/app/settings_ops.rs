@@ -283,6 +283,16 @@ impl App {
         }
     }
 
+    pub fn toggle_mermaid_rendering(&mut self) {
+        self.editor.mermaid_rendering_enabled = !self.editor.mermaid_rendering_enabled;
+        self.update_editor_markdown_preview();
+        self.set_temporary_status_static(if self.editor.mermaid_rendering_enabled {
+            "Mermaid diagrams enabled"
+        } else {
+            "Mermaid diagrams disabled — showing code blocks"
+        });
+    }
+
     pub fn toggle_markdown_preview(&mut self) {
         self.editor.editor_preview_enabled = !self.editor.editor_preview_enabled;
         if self.editor.editor_preview_enabled {
@@ -1096,6 +1106,44 @@ mod tests {
             rename_on_title_change: true,
         };
         App::new(storage).unwrap()
+    }
+
+    #[test]
+    fn mermaid_shortcut_toggles_preview_without_editing_source() {
+        let _lock = crate::config::ConfigTestGuard::lock();
+        let mut app = make_app();
+        app.editor.editor_preview_enabled = true;
+        app.editor
+            .body
+            .insert_str("```mermaid\nflowchart TD\nA-->B\n```");
+        let source = app.editor.body.snapshot();
+        let revision = app.editor.body.revision();
+        let mut focus = crate::editor::EditFocus::Body;
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('m'),
+            crossterm::event::KeyModifiers::ALT,
+        );
+        assert!(app.editor.mermaid_rendering_enabled);
+        for enabled in [false, true] {
+            app.editor.preview_scroll_synced_anchor = Some((3, 1));
+            app.editor.preview_scroll_overridden = true;
+            crate::events::handle_edit_keys(&mut app, key, &mut focus);
+            assert_eq!(app.editor.mermaid_rendering_enabled, enabled);
+            assert_eq!(app.editor.preview_scroll_synced_anchor, None);
+            assert!(!app.editor.preview_scroll_overridden);
+            assert_eq!(app.editor.body.snapshot(), source);
+            assert_eq!(app.editor.body.revision(), revision);
+            let mut opts = crate::markdown::MdRenderOpts::from_config(&app.config, None);
+            opts.wrap = app.config.editor.soft_wrap;
+            opts.render_mermaid = enabled;
+            assert!(
+                !app.editor.md_preview_renderer.as_ref().unwrap().is_changed(
+                    &source,
+                    &app.app_theme,
+                    &opts
+                )
+            );
+        }
     }
 
     #[test]

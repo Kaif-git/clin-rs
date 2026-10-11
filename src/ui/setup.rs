@@ -696,6 +696,7 @@ pub fn draw_setup_view(frame: &mut Frame, app: &mut App) {
         let opts = crate::markdown::MdRenderOpts {
             syntax_hl: true,
             wrap: true,
+            render_mermaid: true,
             icon_mode,
             code_theme: crate::markdown::default_code_theme().to_string(),
             code_line_numbers: true,

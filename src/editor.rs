@@ -73,6 +73,49 @@ pub(crate) struct EditorVisualRowCache {
     pub(crate) key: Option<(u64, u16, bool, ratatui_textarea::WrapMode, u8)>,
     pub(crate) rows: Vec<EditorVisualRow>,
 }
+impl EditorVisualRowCache {
+    /// Source line and wrapped sub-row for the editor's first visible screen row.
+    pub(crate) fn source_position(&self, visual_row: usize) -> (usize, usize) {
+        let Some(row) = self.rows.get(visual_row) else {
+            return (
+                self.rows.last().map_or(visual_row, |row| row.source_line),
+                0,
+            );
+        };
+        let first = self.rows[..visual_row]
+            .iter()
+            .rposition(|previous| previous.source_line != row.source_line)
+            .map_or(0, |index| index + 1);
+        (row.source_line, visual_row - first)
+    }
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use super::{EditorVisualRow, EditorVisualRowCache};
+
+    #[test]
+    fn visual_rows_map_to_source_and_wrapped_offset() {
+        let cache = EditorVisualRowCache {
+            key: None,
+            rows: [0, 0, 0, 1, 2, 2]
+                .into_iter()
+                .map(|source_line| EditorVisualRow {
+                    source_line,
+                    start_char: 0,
+                    end_char: 1,
+                })
+                .collect(),
+        };
+        assert_eq!(cache.source_position(0), (0, 0));
+        assert_eq!(cache.source_position(2), (0, 2));
+        assert_eq!(cache.source_position(3), (1, 0));
+        assert_eq!(cache.source_position(5), (2, 1));
+        assert_eq!(cache.source_position(99), (2, 0));
+        assert_eq!(EditorVisualRowCache::default().source_position(0), (0, 0));
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AutosaveStatus {
     #[default]
@@ -93,6 +136,7 @@ pub struct NoteEditor {
     pub external_editor_enabled: bool,
     pub external_editor: Option<String>,
     pub editor_preview_enabled: bool,
+    pub(crate) mermaid_rendering_enabled: bool,
     pub md_preview_renderer: Option<MarkdownRenderer>,
     pub show_line_numbers: bool,
     pub find_popup: Option<crate::ui::quick_search::QuickSearch<(usize, String)>>,
@@ -134,7 +178,7 @@ pub struct NoteEditor {
     pub title_viewport_col: u16,
     pub last_body_width: u16,
     pub last_body_height: u16,
-    pub preview_scroll_synced_row: Option<u16>,
+    pub preview_scroll_synced_anchor: Option<(usize, usize)>,
     pub preview_scroll_overridden: bool,
     pub last_scroll: Option<crate::ui::scrollbar::ScrollbarMeta>,
     pub scroll_drag: Option<i32>,
@@ -167,6 +211,7 @@ impl Default for NoteEditor {
             external_editor_enabled: false,
             external_editor: None,
             editor_preview_enabled: false,
+            mermaid_rendering_enabled: true,
             md_preview_renderer: None,
             show_line_numbers: false,
             find_popup: None,
@@ -203,7 +248,7 @@ impl Default for NoteEditor {
             preview_drag_last_pos: None,
             last_body_width: 0u16,
             last_body_height: 0u16,
-            preview_scroll_synced_row: None,
+            preview_scroll_synced_anchor: None,
             preview_scroll_overridden: false,
             last_scroll: None,
             scroll_drag: None,

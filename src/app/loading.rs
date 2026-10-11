@@ -1786,6 +1786,7 @@ impl App {
             self.editor.editing_id.as_deref(),
         );
         opts.wrap = self.config.editor.soft_wrap;
+        opts.render_mermaid = self.editor.mermaid_rendering_enabled;
         let height = self.desired_editor_preview_height();
         let viewport = crate::markdown::RenderViewport {
             start: renderer.visible_start(),
@@ -1817,7 +1818,7 @@ impl App {
             renderer.render_with(&content, width, &self.app_theme, &opts, viewport);
             self.editor.preview_content_width = Some(width);
             self.editor.pending_markdown_resize = None;
-            self.editor.preview_scroll_synced_row = None;
+            self.editor.preview_scroll_synced_anchor = None;
             self.editor.preview_scroll_overridden = false;
         }
         self.editor.md_preview_renderer = Some(renderer);

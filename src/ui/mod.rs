@@ -1875,6 +1875,11 @@ pub(crate) fn ensure_editor_visual_rows(
                 editor_visual_rows(full_doc, wrap_mode, inner_width, show_ln, tab_len);
             editor.visual_row_cache.key = Some(key);
         }
+    } else {
+        // Screen rows are source rows with wrapping disabled. Never reuse the
+        // old wrapped map after toggling soft wrap.
+        editor.visual_row_cache.key = None;
+        editor.visual_row_cache.rows.clear();
     }
 }
 
@@ -2826,6 +2831,28 @@ fn apply_highlight_styles(
 
 #[cfg(test)]
 mod markdown_highlight_tests {
+    #[test]
+    fn preview_source_anchor_tracks_resize_and_wrap_toggle() {
+        use ratatui_textarea::WrapMode;
+        let mut editor = crate::editor::NoteEditor::new();
+        editor
+            .body
+            .textarea_mut()
+            .insert_str("long source line that wraps across the editor width\nnext");
+        editor
+            .body
+            .textarea_mut()
+            .set_wrap_mode(WrapMode::WordOrGlyph);
+        super::ensure_editor_visual_rows(&mut editor, 12, false);
+        assert_eq!(editor.visual_row_cache.source_position(1), (0, 1));
+        super::ensure_editor_visual_rows(&mut editor, 100, false);
+        assert_eq!(editor.visual_row_cache.source_position(1), (1, 0));
+        editor.body.textarea_mut().set_wrap_mode(WrapMode::None);
+        super::ensure_editor_visual_rows(&mut editor, 12, false);
+        assert_eq!(editor.visual_row_cache.source_position(1), (1, 0));
+        assert_eq!(editor.visual_row_cache.rows, []);
+    }
+
     use super::*;
     use crate::editor_document::EditorDocument;
     use crate::storage::Storage;

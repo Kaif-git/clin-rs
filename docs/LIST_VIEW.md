@@ -32,7 +32,7 @@ The Tree layout provides a hierarchical view of your folders and notes, similar 
 ## Previews and Rendering
 
 The List view features a configurable preview pane that renders the contents of the selected note:
-- **Markdown**: Renders formatted text, lists, and code blocks.
+- **Markdown**: Renders formatted text, lists, code blocks, and read-only terminal-native Mermaid flowcharts. Invalid/oversized diagrams retain source with a diagnostic; terminal substitutions are explicit. See [Mermaid previews](EDITOR.md#mermaid-flowchart-previews).
 - **Canvas Snapshots**: Shows a static preview of `.canvas` files.
 - **Draw Snapshots**: Shows a static preview of `.draw` files.
 - **Images**: Shows supported image files through terminal graphics when `[features] images` is enabled.

@@ -65,6 +65,30 @@ impl RenderedDocument {
         &mut self.lines
     }
 
+    /// Map an editor source position to the first corresponding preview row,
+    /// clamping a wrapped offset to rows associated with that source line.
+    pub(crate) fn source_to_rendered_position(
+        &self,
+        source_line: usize,
+        wrapped_row: usize,
+    ) -> usize {
+        if self.lines.is_empty() {
+            return 0;
+        }
+        let target = source_line.saturating_add(1);
+        let start = self
+            .lines
+            .iter()
+            .position(|line| line.source_line >= target)
+            .unwrap_or(self.lines.len() - 1);
+        let source = self.lines[start].source_line;
+        let length = self.lines[start..]
+            .iter()
+            .take_while(|line| line.source_line == source)
+            .count();
+        start + wrapped_row.min(length.saturating_sub(1))
+    }
+
     pub(crate) fn line(&self, index: usize) -> Option<&RenderLine> {
         self.lines.get(index)
     }

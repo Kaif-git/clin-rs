@@ -1171,6 +1171,59 @@ fn render_code_block(
         String::new()
     };
 
+    if ctx.opts.render_mermaid && is_fenced && lang.eq_ignore_ascii_case("mermaid") {
+        let columns = u16::try_from(ctx.cols.saturating_sub(margin)).unwrap_or(u16::MAX);
+        match pinstar::preview::render_mermaid(&cb.literal, columns) {
+            Ok(preview) => {
+                let mut rows = vec![ratatui::text::Line::styled(
+                    "Mermaid flowchart",
+                    ctx.theme.code_inline,
+                )];
+                rows.extend(preview.lines);
+                rows.extend(preview.notices.into_iter().map(|notice| {
+                    ratatui::text::Line::styled(format!("Mermaid: {notice}"), ctx.theme.blockquote)
+                }));
+                let denominator = rows.len().saturating_sub(1).max(1);
+                for (index, row) in rows.into_iter().enumerate() {
+                    if ctx.cancel_token.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    // Map the full diagram back to its fenced source range. This
+                    // remains monotonic whether a diagram expands or contracts it.
+                    let source = src_line
+                        + end_line.saturating_sub(src_line).saturating_mul(index) / denominator;
+                    if index == 0 {
+                        ctx.ensure_source_line(source, margin);
+                    } else {
+                        ctx.push_line(source, margin);
+                    }
+                    for span in row.spans {
+                        ctx.push_str(&span.content, ctx.theme.paragraph.patch(span.style), margin);
+                    }
+                }
+                ctx.quote_depth = saved_q_depth;
+                return;
+            }
+            Err(error) => {
+                // Parser errors may contain untrusted source. Keep diagnostics
+                // bounded and strip terminal controls; retain the complete source.
+                let message: String = error
+                    .to_string()
+                    .chars()
+                    .filter(|ch| !ch.is_control())
+                    .take(240)
+                    .collect();
+                ctx.ensure_source_line(src_line, margin);
+                ctx.push_str(
+                    &format!("Mermaid: {message}; showing source"),
+                    ctx.theme.blockquote,
+                    margin,
+                );
+                ctx.push_line(src_line, margin);
+            }
+        }
+    }
+
     // ---- Fenced opening ----
     if is_fenced {
         ctx.ensure_source_line(src_line, margin);
@@ -1788,6 +1841,7 @@ mod tests {
         MdRenderOpts {
             syntax_hl: true,
             wrap: true,
+            render_mermaid: true,
             icon_mode,
             code_theme: default_code_theme().to_string(),
             code_line_numbers: false,
@@ -1809,6 +1863,136 @@ mod tests {
             .document
             .lines()
             .to_vec()
+    }
+
+    #[test]
+    fn mermaid_fences_render_inline_and_preserve_source_anchors() {
+        let source = "before\n\n```mermaid\nflowchart TD\nA[Start] --> B[Finish]\n```\n\nbetween\n\n~~~mermaid\ngraph LR\nC[Other] --> D[End]\n~~~\n\nafter";
+        for columns in [30, 60, 120] {
+            for wrap in [false, true] {
+                let lines = render_test(source, columns, wrap, false);
+                let output = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+                assert_eq!(output.matches("Mermaid flowchart").count(), 2, "{output}");
+                assert!(
+                    output.contains("Start")
+                        && output.contains("Finish")
+                        && output.contains("Other")
+                );
+                assert!(
+                    !output.contains("A[Start]"),
+                    "source should be replaced by diagram"
+                );
+                assert!(
+                    lines
+                        .windows(2)
+                        .all(|pair| pair[0].source_line <= pair[1].source_line)
+                );
+                let document = RenderedDocument::new(lines);
+                for anchor in ["before", "between", "after"] {
+                    let source_line = source.lines().position(|line| line == anchor).unwrap();
+                    let rendered = document.source_to_rendered_position(source_line, 0);
+                    assert!(
+                        line_text(document.line(rendered).unwrap()).contains(anchor),
+                        "{columns}/{wrap}/{anchor}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_mermaid_uses_normal_code_blocks_with_source_anchors() {
+        let theme = MarkdownTheme::from_app_theme(&AppThemeColors::default());
+        let cancel = AtomicBool::new(false);
+        for literal in [
+            "flowchart TD\nA-->B",
+            "flowchart TD\nA[broken",
+            "sequenceDiagram\nA->>B: hello",
+        ] {
+            let source = format!("before\n\n```mermaid\n{literal}\n```\n\nafter");
+            for wrap in [true, false] {
+                let mut opts = mk_opts(crate::config::IconMode::default());
+                opts.render_mermaid = false;
+                opts.wrap = wrap;
+                let document = render_layout(&source, 80, &theme, &opts, &cancel)
+                    .unwrap()
+                    .document;
+                let output = document
+                    .lines()
+                    .iter()
+                    .map(line_text)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(output.contains(literal.lines().last().unwrap()), "{output}");
+                assert!(
+                    !output.contains("Mermaid flowchart") && !output.contains("showing source"),
+                    "{output}"
+                );
+                assert!(
+                    document
+                        .lines()
+                        .windows(2)
+                        .all(|pair| pair[0].source_line <= pair[1].source_line)
+                );
+                for anchor in ["before", "after"] {
+                    let line = source.lines().position(|line| line == anchor).unwrap();
+                    assert!(
+                        line_text(
+                            document
+                                .line(document.source_to_rendered_position(line, 0))
+                                .unwrap()
+                        )
+                        .contains(anchor)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mermaid_errors_retain_fenced_source_and_explanation() {
+        for literal in ["flowchart TD\nA[broken", "sequenceDiagram\nA->>B: hello"] {
+            let source = format!("```mermaid\n{literal}\n```\nafter");
+            let lines = render_test(&source, 100, true, false);
+            let output = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+            assert!(output.contains("showing source"), "{output}");
+            assert!(output.contains(literal.lines().last().unwrap()), "{output}");
+            let document = RenderedDocument::new(lines);
+            let rendered = document.source_to_rendered_position(source.lines().count() - 1, 0);
+            assert!(line_text(document.line(rendered).unwrap()).contains("after"));
+        }
+        let output = render_test("```mermaid\ngraph TD\nA-->B\n```", 6, true, false)
+            .iter()
+            .map(line_text)
+            .collect::<String>();
+        assert!(
+            output
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect::<String>()
+                .contains("Mermaid")
+        );
+    }
+
+    #[test]
+    fn source_mapping_clamps_wrapped_rows_and_end_of_document() {
+        let lines = render_test(
+            "long source text with words that wrap over several screen rows\nnext",
+            14,
+            true,
+            false,
+        );
+        let document = RenderedDocument::new(lines);
+        let start = document.source_to_rendered_position(0, 0);
+        let wrapped = document.source_to_rendered_position(0, 1);
+        assert!(wrapped > start);
+        assert_eq!(document.line(wrapped).unwrap().source_line, 1);
+        let clamped = document.source_to_rendered_position(0, usize::MAX);
+        assert_eq!(document.line(clamped).unwrap().source_line, 1);
+        assert_eq!(
+            document.source_to_rendered_position(usize::MAX, 0),
+            document.line_count() - 1
+        );
     }
 
     fn line_text(line: &RenderLine) -> String {

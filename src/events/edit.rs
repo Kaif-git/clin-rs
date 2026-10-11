@@ -230,6 +230,10 @@ pub fn handle_edit_keys(app: &mut App, key: KeyEvent, focus: &mut EditFocus) -> 
                 }
                 return true;
             }
+            EditAction::ToggleMermaidRendering => {
+                app.toggle_mermaid_rendering();
+                return false;
+            }
             EditAction::ToggleMarkdownPreview => {
                 app.toggle_markdown_preview();
                 if *focus == EditFocus::Sidebar {

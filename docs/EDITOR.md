@@ -26,11 +26,43 @@ Body mutations schedule Markdown preview from `EditorDocument::revision()`.
 never schedule body preview work. Initial open and explicit preview toggles
 remain immediate.
 
+## Mermaid Flowchart Previews
+
+Fenced `mermaid` blocks (backtick or tilde fences) render inline as read-only,
+terminal-native flowcharts through Pinstar. Edit their source in the body, not in
+an embedded canvas editor. Diagrams default to **on**. **Alt+m** toggles all
+Mermaid blocks in the main edit preview between diagrams and ordinary code
+blocks, including malformed or non-flowchart blocks. This session-only preference
+resets to on when clin restarts; list and linked-note previews are unaffected.
+No collapse control is needed: preview scrolling tracks the editor's source line
+and wrapped sub-row, rather than copying screen row numbers. Diagram height may differ from fenced-source height. Source anchors
+are recalculated on resizing and wrapping changes; independent preview scrolling
+lasts until the editor anchor moves or preview content is rebuilt.
+
+The native parser is pinned to `merman-core` 0.6.0. Nodes, nested subgraphs,
+directions, edge labels/markers, classes and basic terminal colors are retained.
+Specialized shapes use labelled outlines; HTML/Markdown, icons/images, CSS,
+curves, animation and browser configuration use explicit terminal substitutions.
+Images are placeholders, remote assets are not fetched, links are text and
+callbacks never execute. Substitution notices appear below the diagram.
+
+Invalid, unsupported, too-wide or oversized diagrams retain their fenced source
+with an explanation, never a silently incomplete graph. Preview limits are
+64 KiB per block, 128 nodes, 256 edges, 32 groups, 16 nesting levels, 240 columns
+and 512 diagram rows. Conservative pre-parse chart-body budgets also cap raw `&` characters at 32,
+opening delimiters at 256, and `subgraph` words at 32, including labels/comments.
+YAML frontmatter uses a non-expanding scanner with 16-level structure limit;
+anchors/aliases are rejected, while literal `&`/`*` in strings remain supported.
+Rejected input remains visible as source rather than risking parser expansion.
+Rendering runs in the existing background Markdown layout pipeline and cache;
+no temporary files containing note text are created.
+
 ## Focus and Preview
 
 The current editor has **Title**, **Body**, and visible **Sidebar** focus; it has no READ/EDIT modal state or `EditMode` enum. Typing edits the focused text field directly. `Ctrl+t` cycles focus; `Tab` inserts a tab in the body. Presets change navigation outside text inputs, not the body editor.
 
-`Ctrl+p` toggles the Markdown preview and `F11` expands it. `Esc` first closes an active popup/link preview; otherwise it saves and returns directly to List. `Ctrl+s` saves without leaving.
+`Ctrl+p` toggles the Markdown preview, `Alt+m` toggles Mermaid diagram rendering,
+and `F11` expands the preview. `Esc` first closes an active popup/link preview; otherwise it saves and returns directly to List. `Ctrl+s` saves without leaving.
 
 `edit_mode_highlight` (default `true`) controls Markdown syntax highlighting over the editable body, despite its historical name. `ghost_syntax` dims Markdown delimiters, and `extended_markdown_features` enables additional syntax forms.
 
