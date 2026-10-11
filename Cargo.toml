@@ -107,7 +107,7 @@ ratatui-image = { version = "11.0.6", default-features = false, features = ["cro
 rand = "0.10"
 ratatui = "0.30"
 graf = { package = "graf-rs", version = "1.1.0", git = "https://github.com/reekta92/graf", rev = "9c32610" }
-pinstar = { version = "1.0.0", git = "https://github.com/reekta92/pinstar", rev = "a28debb5ebb5", features = ["images", "mermaid-preview"] }
+pinstar = { version = "1.0.0", git = "https://github.com/reekta92/pinstar", rev = "68e3e60eec70", features = ["images", "mermaid-preview"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml_ng = "0.10"
