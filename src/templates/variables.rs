@@ -53,6 +53,12 @@ impl FolderTemplateConfig {
 }
 
 impl Storage {
+    /// Presence only: malformed configs remain discoverable so they can be repaired.
+    pub fn has_local_template_config(&self, folder: &str) -> bool {
+        fs::symlink_metadata(self.notes_dir.join(folder).join(FOLDER_TEMPLATE_CONFIG))
+            .is_ok_and(|metadata| metadata.is_file() || metadata.file_type().is_symlink())
+    }
+
     /// Resolve a vault-relative destination, including folders not created yet.
     /// Existing ancestors and symlinks must resolve inside the vault.
     pub fn template_folder_path(&self, folder: &str) -> Result<PathBuf> {

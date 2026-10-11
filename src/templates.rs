@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+mod folder_ui_tests;
 mod variables;
 #[cfg(test)]
 mod variables_tests;

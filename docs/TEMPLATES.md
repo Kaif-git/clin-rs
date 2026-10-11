@@ -150,7 +150,13 @@ Select a physical folder (or a note inside it), open the command palette, and ch
 
 The built-in editor validates before saving; an invalid edit leaves the previous file intact and stays in the editor. With external-editor mode enabled, your editor writes directly to disk; Clin validates on return and reports errors. An invalid external edit must be corrected before template-based creation can continue.
 
-The config is excluded from note listings even with hidden/all-files display enabled. No Smart Folder template automation, prompts, expressions, or executable plugins are included.
+Folders with their own `.clin-template.toml` display a gear glyph (`⚙` in Unicode mode) on the folder item: beside its name in tree layout, and in the tile's corner in grid layout, alongside any pin badge. This indicates a local config file, not merely inherited variables. The badge respects the icon-mode setting and does not appear on virtual folders or the `..` navigation tile.
+
+Inside that folder, `.clin-template.toml` appears as a muted selectable item in both tree and grid layouts, even when hidden/all-files display is off. Select it and press Enter (or double-click) to edit using the same validated editor; its preview displays the TOML. The palette action remains available to create a config when none exists.
+
+Config files are not indexed or counted as notes and cannot be pinned/tagged through note actions. They remain visible during selection mode without participating in bulk note selection. External config creation/removal updates the badge and item without moving the selected note.
+
+No header indicator, Smart Folder template automation, prompts, expressions, or executable plugins are included.
 
 ```rust
 impl TemplateVariables {

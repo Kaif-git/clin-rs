@@ -17,7 +17,7 @@ fn storage(root: &Path) -> Storage {
     }
 }
 
-fn config(root: &Path, folder: &str, content: &str) {
+pub(super) fn config(root: &Path, folder: &str, content: &str) {
     let dir = root.join(folder);
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join(FOLDER_TEMPLATE_CONFIG), content).unwrap();
@@ -246,7 +246,7 @@ fn configs_never_appear_as_notes_even_with_all_files_enabled() {
     );
 }
 
-fn app(root: &Path) -> App {
+pub(super) fn app(root: &Path) -> App {
     crate::config::set_config_path_override(root.join(".clin/config.toml"));
     fs::create_dir_all(root.join(".clin/templates")).unwrap();
     let mut app = App::new(storage(root)).unwrap();

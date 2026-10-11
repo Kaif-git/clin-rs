@@ -291,6 +291,7 @@ impl App {
                 .map(|n| n.folder.clone())
                 .unwrap_or_default(),
             Some(VisualItem::CreateNew { path, .. }) => path.clone(),
+            Some(VisualItem::TemplateConfig { folder, .. }) => folder.clone(),
             Some(VisualItem::SmartFolder { .. }) => String::new(),
             Some(VisualItem::Subnote { .. }) => String::new(),
             None => String::new(),
@@ -357,6 +358,10 @@ impl App {
         match &self.list.visual_list[self.list.visual_index] {
             VisualItem::CreateNew { path, .. } => {
                 self.begin_create_select_format_in_folder(path.clone());
+            }
+            VisualItem::TemplateConfig { folder, .. } => {
+                let folder = folder.clone();
+                self.open_folder_template_config(&folder);
             }
             VisualItem::Folder { path, .. } => {
                 let p = path.clone();

@@ -1147,6 +1147,7 @@ impl App {
         Self::is_virtual_pinned_path(path)
             || Self::is_virtual_subnotes_path(path)
             || Self::is_subnotes_parent_grid_path(path)
+            || path == VIRTUAL_SMART_PATH
             || crate::list_view::SmartFolderKind::from_virtual_path(path).is_some()
     }
 
@@ -1250,7 +1251,18 @@ impl App {
                 if self.list.drag_hover == Some(vi) {
                     style = style.bg(self.app_theme.highlight_bg);
                 }
-                let mut lines = vec![Line::from(vec![Span::styled(text, style)])];
+                let mut spans = vec![Span::styled(text, style)];
+                if name != ".." && self.list.template_config_folders.contains(path) {
+                    let glyph =
+                        crate::ui::get_icon("\u{f013}", "\u{2699}", self.config.ui.icon_mode);
+                    if !glyph.is_empty() {
+                        spans.push(Span::styled(
+                            format!(" {glyph}"),
+                            Style::default().fg(self.app_theme.muted),
+                        ));
+                    }
+                }
+                let mut lines = vec![Line::from(spans)];
                 if self.list.list_density == crate::config::ListDensity::Comfortable {
                     lines.push(Line::from(""));
                 }
@@ -1410,6 +1422,22 @@ impl App {
                     lines.push(Line::from(""));
                 }
                 ListItem::new(lines)
+            }
+            VisualItem::TemplateConfig { depth, .. } => {
+                let indent = "  ".repeat(*depth);
+                let icon = crate::ui::get_icon("\u{f15c}", "\u{2699}", self.config.ui.icon_mode);
+                let label = if icon.is_empty() {
+                    format!("{indent}{}", crate::templates::FOLDER_TEMPLATE_CONFIG)
+                } else {
+                    format!(
+                        "{indent} {icon} {}",
+                        crate::templates::FOLDER_TEMPLATE_CONFIG
+                    )
+                };
+                ListItem::new(Line::from(Span::styled(
+                    label,
+                    Style::default().fg(self.app_theme.muted),
+                )))
             }
             VisualItem::CreateNew { depth, .. } => {
                 let indent = "  ".repeat(*depth);
@@ -1606,6 +1634,7 @@ impl App {
                 }
                 crate::list_view::VisualItem::Folder { .. }
                 | crate::list_view::VisualItem::CreateNew { .. }
+                | crate::list_view::VisualItem::TemplateConfig { .. }
                 | crate::list_view::VisualItem::SmartFolder { .. }
                 | crate::list_view::VisualItem::Subnote { .. } => {
                     self.set_temporary_status_static(

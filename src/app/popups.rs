@@ -89,13 +89,6 @@ impl App {
             self.set_temporary_status_static("Select a physical folder in the notes list first");
             return;
         }
-        if self.feature_disabled(
-            self.config.features.templates.is_enabled(),
-            "Templates",
-            "templates",
-        ) {
-            return;
-        }
         let folder = if self.list.notes_layout == crate::config::NotesLayout::Grid {
             self.list.grid_folder.clone()
         } else {
@@ -112,12 +105,23 @@ impl App {
                 _ => self.get_current_folder_context(),
             }
         };
-        if Self::is_virtual_path(&folder) {
+        self.open_folder_template_config(&folder);
+    }
+
+    pub(crate) fn open_folder_template_config(&mut self, folder: &str) {
+        if self.feature_disabled(
+            self.config.features.templates.is_enabled(),
+            "Templates",
+            "templates",
+        ) {
+            return;
+        }
+        if Self::is_virtual_path(folder) {
             self.set_temporary_status_static("Select a physical folder, not a virtual folder");
             return;
         }
         let result = (|| -> anyhow::Result<std::path::PathBuf> {
-            let path = self.storage.folder_template_config_path(&folder)?;
+            let path = self.storage.folder_template_config_path(folder)?;
             let parent = path
                 .parent()
                 .ok_or_else(|| anyhow::anyhow!("folder template config has no parent"))?;
@@ -167,6 +171,7 @@ impl App {
                     self.messages
                         .push(text, crate::app::messages::MessageSeverity::Warning);
                 }
+                self.refresh_visual_list();
             } else {
                 self.sync_template_filename(path);
                 self.refresh_template_popup();

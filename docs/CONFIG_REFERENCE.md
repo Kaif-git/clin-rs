@@ -21,7 +21,7 @@ chapter = "04"
 
 Names must match `[A-Za-z_][A-Za-z0-9_]*`. Built-ins (`date`, `datetime`, `time`, `weekday`, `year`, `month`, `day`) cannot be overridden. Unknown tokens stay literal and warn; invalid configuration blocks template-based creation. These note variables are separate from the UI/statusline interpolation variables documented below.
 
-Use **Edit Folder Template Variables** in the command palette to edit the selected physical folder's config, or pass `--folder` to `clin notes new -t ...`. See [Template System](TEMPLATES.md#folder-local-custom-variables) for inheritance, validation, and CLI precedence details.
+Use **Edit Folder Template Variables** in the command palette to create/edit the selected physical folder's config, or select its muted `.clin-template.toml` item and press Enter. A gear badge on the folder item indicates its own local config; inherited-only variables do not add a badge. CLI creation selects the destination with `--folder` in `clin notes new -t ...`. See [Template System](TEMPLATES.md#folder-local-custom-variables) for inheritance, validation, and CLI precedence details.
 
 ---
 

@@ -823,9 +823,9 @@ fn run_cache(action: CacheCmd) -> Result<()> {
         }
     }
 }
-fn process_watcher_events(app: &mut App) {
+fn process_watcher_events(app: &mut App) -> bool {
     let Some(ref rx) = app.fs_event_rx else {
-        return;
+        return false;
     };
     let overflow = app.fs_overflow.swap(false, Ordering::SeqCst);
 
@@ -833,15 +833,58 @@ fn process_watcher_events(app: &mut App) {
     while let Ok(evt) = rx.try_recv() {
         events.push(evt);
     }
+    // Configs are UI items, not note summaries. Refresh them immediately, even
+    // while note-catalog events wait for the debounce window.
+    let template_config_changed = events.iter().any(|event| {
+        event.event.paths.iter().any(|path| {
+            path.starts_with(&app.storage.notes_dir)
+                && crate::templates::is_folder_template_config(path)
+        })
+    });
+    if template_config_changed {
+        let selected = app.list.visual_list.get(app.list.visual_index).cloned();
+        let mut selections = HashMap::new();
+        for index in &app.list.selected_indices {
+            if let Some(item) = app.list.visual_list.get(*index) {
+                *selections.entry(item.clone()).or_insert(0usize) += 1;
+            }
+        }
+        app.refresh_visual_list();
+        // Config rows can shift visual indices. Keep bulk selection attached
+        // to the same items, in linear time, rather than to their old positions.
+        app.list.selected_indices = app
+            .list
+            .visual_list
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                let count = selections.get_mut(item)?;
+                if *count == 0 {
+                    return None;
+                }
+                *count -= 1;
+                Some(index)
+            })
+            .collect();
+        if let Some(selected) = selected
+            && let Some(index) = app
+                .list
+                .visual_list
+                .iter()
+                .position(|item| *item == selected)
+        {
+            app.list.visual_index = index;
+        }
+    }
 
     if overflow {
         app.request_notes_reconcile();
         app.watcher_window_start = None;
-        return;
+        return template_config_changed;
     }
 
     if events.is_empty() && app.watcher_window_start.is_none() {
-        return;
+        return template_config_changed;
     }
 
     if app.watcher_window_start.is_none() {
@@ -853,10 +896,10 @@ fn process_watcher_events(app: &mut App) {
     }
 
     let Some(window_start) = app.watcher_window_start else {
-        return;
+        return template_config_changed;
     };
     if Instant::now() < window_start + Duration::from_millis(250) {
-        return;
+        return template_config_changed;
     }
 
     app.watcher_window_start = None;
@@ -958,12 +1001,15 @@ fn process_watcher_events(app: &mut App) {
         }
     }
 
+    changes_map
+        .retain(|id, _| !crate::templates::is_folder_template_config(std::path::Path::new(id)));
     if needs_full_reconcile || changes_map.len() > 512 {
         app.request_notes_reconcile();
     } else if !changes_map.is_empty() {
         let changes: Vec<_> = changes_map.into_values().collect();
         app.send_catalog_paths(changes);
     }
+    template_config_changed
 }
 
 fn perform_orderly_catalog_shutdown(app: &mut App) {
@@ -1340,7 +1386,9 @@ where
         if app.handle_search_events() && app.mode == ViewMode::List {
             list_dirty = true;
         }
-        process_watcher_events(app);
+        if process_watcher_events(app) && app.mode == ViewMode::List {
+            list_dirty = true;
+        }
 
         if app.tick_status() {
             if app.mode == ViewMode::List {
