@@ -318,6 +318,20 @@ pub(crate) fn apply_text_shortcuts<T: TextEditTarget>(
         target.move_cursor(CursorMove::Bottom);
         return true;
     }
+    // Kitty reserves Ctrl+Shift+Left/Right for tab switching. Offer a word
+    // selection alias without overriding configured edit shortcuts.
+    if key.modifiers == KeyModifiers::ALT | KeyModifiers::SHIFT {
+        let movement = match key.code {
+            KeyCode::Left => CursorMove::WordBack,
+            KeyCode::Right => CursorMove::WordForward,
+            _ => return false,
+        };
+        if !target.has_selection() {
+            target.start_selection();
+        }
+        target.move_cursor(movement);
+        return true;
+    }
     false
 }
 
@@ -373,6 +387,61 @@ mod tests {
         assert!(area.has_selection());
         area.copy();
         assert_eq!(area.yank_text(), "hello");
+    }
+
+    #[test]
+    fn keyboard_word_selection_in_title_and_body() {
+        use crossterm::event::KeyEventKind;
+
+        let keybinds = Keybinds::default();
+        for modifier in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
+            for (direction, start, ranges) in [
+                (KeyCode::Right, CursorMove::Head, [(0, 4), (0, 8)]),
+                (KeyCode::Left, CursorMove::End, [(8, 13), (4, 13)]),
+            ] {
+                let mut title = text_area("one two three");
+                let mut body = EditorDocument::from_lines(["one two three".to_owned()]);
+                title.move_cursor(start);
+                body.move_cursor(start);
+                let revision = body.revision();
+
+                for (kind, expected) in [KeyEventKind::Press, KeyEventKind::Repeat]
+                    .into_iter()
+                    .zip(ranges)
+                {
+                    let key =
+                        KeyEvent::new_with_kind(direction, modifier | KeyModifiers::SHIFT, kind);
+                    update_selection_for_move(&mut title, &key);
+                    feed_key(&keybinds, &mut title, key);
+                    update_selection_for_move(&mut body, &key);
+                    if !apply_text_shortcuts(&keybinds, &mut body, key) {
+                        body.input(ratatui_textarea::Input::from(key));
+                    }
+                    assert_eq!(
+                        title.selection_range(),
+                        Some(((0, expected.0), (0, expected.1))),
+                        "{key:?}",
+                    );
+                    assert_eq!(
+                        body.selection_range()
+                            .map(|(start, end)| { ((start.row, start.col), (end.row, end.col)) }),
+                        title.selection_range(),
+                        "{key:?}",
+                    );
+                    assert_eq!(body.revision(), revision);
+                    assert_eq!(title.lines(), ["one two three"]);
+                }
+
+                let key = KeyEvent::new(direction, KeyModifiers::NONE);
+                update_selection_for_move(&mut title, &key);
+                feed_key(&keybinds, &mut title, key);
+                update_selection_for_move(&mut body, &key);
+                body.input(ratatui_textarea::Input::from(key));
+                assert!(!title.has_selection());
+                assert!(!body.has_selection());
+                assert_eq!(body.revision(), revision);
+            }
+        }
     }
 
     #[test]

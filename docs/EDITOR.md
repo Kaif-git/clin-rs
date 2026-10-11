@@ -82,6 +82,42 @@ while older text above and all text below the current paragraph are dimmed.
 
 The `EditSidebar` on `NoteEditor` displays forward/back link panes alongside the editor. `[[wikilink]]` targets and back-references are resolved and listed. The `link_preview` state field tracks the active preview. `Ctrl+o` toggles Outline, `Ctrl+b` toggles Links, and `Ctrl+t` cycles focus to a visible sidebar. `Alt+l` previews the link under the cursor.
 
+## Keyboard Text Selection
+
+Title and body fields support:
+
+| Keys | Selection |
+|---|---|
+| `Shift+Left/Right` | Extend by one character |
+| `Ctrl+Shift+Left/Right` | Extend by one word |
+| `Alt+Shift+Left/Right` | Extend by one word (alternative for terminal shortcut conflicts) |
+| `Shift+Home/End` | Extend to the start/end of the line |
+
+Keep holding the modifiers to extend selection across multiple words. An
+unmodified arrow key clears the selection and moves the cursor.
+
+### Kitty and Other Terminal Shortcuts
+
+Kitty binds `Ctrl+Shift+Left/Right` to previous/next tab by default. Terminal
+shortcuts run before clin receives input; enabling the Kitty keyboard protocol
+cannot bypass them. Use `Alt+Shift+Left/Right`, or add these lines to
+`~/.config/kitty/kitty.conf` to pass the original keys through:
+
+```conf
+map ctrl+shift+left
+map ctrl+shift+right
+```
+
+Reload Kitty's configuration (`Ctrl+Shift+F5` with default shortcuts), or restart
+Kitty. These mappings disable tab switching on those two keys. See
+[Kitty keyboard shortcuts](https://sw.kovidgoyal.net/kitty/conf/#keyboard-shortcuts)
+for mapping syntax.
+
+For other terminals, remove conflicting shortcuts or configure them to send
+arrow keys with both modifiers. clin can only select by word when the terminal
+forwards the key and its modifiers; it cannot recover modifiers stripped by a
+terminal or multiplexer.
+
 ## External Editor
 
 | Config Option | Type | Default | Description |
