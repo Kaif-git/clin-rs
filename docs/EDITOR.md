@@ -26,6 +26,33 @@ Body mutations schedule Markdown preview from `EditorDocument::revision()`.
 never schedule body preview work. Initial open and explicit preview toggles
 remain immediate.
 
+## Mermaid Flowchart Previews
+
+Fenced `mermaid` blocks (backtick or tilde fences) render inline as read-only,
+terminal-native flowcharts through Pinstar. Edit their source in the body, not in
+an embedded canvas editor. No collapse/toggle key is needed: preview scrolling
+tracks the editor's source line and wrapped sub-row, rather than copying screen
+row numbers. Diagram height may differ from fenced-source height. Source anchors
+are recalculated on resizing and wrapping changes; independent preview scrolling
+lasts until the editor anchor moves or preview content is rebuilt.
+
+The native parser is pinned to `merman-core` 0.6.0. Nodes, nested subgraphs,
+directions, edge labels/markers, classes and basic terminal colors are retained.
+Specialized shapes use labelled outlines; HTML/Markdown, icons/images, CSS,
+curves, animation and browser configuration use explicit terminal substitutions.
+Images are placeholders, remote assets are not fetched, links are text and
+callbacks never execute. Substitution notices appear below the diagram.
+
+Invalid, unsupported, too-wide or oversized diagrams retain their fenced source
+with an explanation, never a silently incomplete graph. Preview limits are
+64 KiB per block, 128 nodes, 256 edges, 32 groups, 16 nesting levels, 240 columns
+and 512 diagram rows. Pre-parse budgets also cap grouping syntax at 32 unquoted
+`&` separators and data nesting at 16 levels to prevent expansion before model
+allocation. YAML anchors/aliases are rejected; quote literal `&` or `*` characters
+in frontmatter configuration. Rejected input remains visible as source.
+Rendering runs in the existing background Markdown layout pipeline and cache;
+no temporary files containing note text are created.
+
 ## Focus and Preview
 
 The current editor has **Title**, **Body**, and visible **Sidebar** focus; it has no READ/EDIT modal state or `EditMode` enum. Typing edits the focused text field directly. `Ctrl+t` cycles focus; `Tab` inserts a tab in the body. Presets change navigation outside text inputs, not the body editor.

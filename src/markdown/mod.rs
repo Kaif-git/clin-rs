@@ -347,16 +347,13 @@ impl MarkdownRenderer {
     }
 
     pub fn source_to_rendered_line(&self, source_line_0_based: usize) -> usize {
-        let comrak_line = source_line_0_based + 1;
-        let document = match self.document() {
-            Some(doc) => doc,
-            None => return 0,
-        };
-        document
-            .lines()
-            .iter()
-            .position(|l| l.source_line >= comrak_line)
-            .unwrap_or(0)
+        self.source_to_rendered_position(source_line_0_based, 0)
+    }
+
+    pub fn source_to_rendered_position(&self, source_line: usize, wrapped_row: usize) -> usize {
+        self.document().map_or(0, |document| {
+            document.source_to_rendered_position(source_line, wrapped_row)
+        })
     }
 
     pub fn rendered_to_source_line(&self, rendered_line: usize) -> usize {

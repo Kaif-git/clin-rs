@@ -48,6 +48,8 @@ pub(crate) fn render_editor_widget(
         );
         app.editor.body_viewport_row = r;
         app.editor.body_viewport_col = c;
+        let width = app.editor.body.inner_rect(area).width;
+        super::ensure_editor_visual_rows(&mut app.editor, width, show_ln);
     }
     if app
         .editor
@@ -341,24 +343,18 @@ pub fn draw_edit_view(frame: &mut Frame, app: &mut App, focus: EditFocus) {
                 .padding(Padding::new(2, 2, 1, 1));
             let inner = block.inner(preview_area);
 
-            let editor_row = app.editor.body_viewport_row;
-            let last_synced = app.editor.preview_scroll_synced_row;
-            let resync = !app.editor.preview_scroll_overridden
-                || last_synced.is_none()
-                || last_synced != Some(editor_row);
+            let anchor = app
+                .editor
+                .visual_row_cache
+                .source_position(usize::from(app.editor.body_viewport_row));
+            let last_synced = app.editor.preview_scroll_synced_anchor;
+            let resync = !app.editor.preview_scroll_overridden || last_synced != Some(anchor);
             if resync {
-                let rendered_start = if app.config.editor.soft_wrap {
-                    // With wrap ON: body_viewport_row is first visible screen line
-                    // Preview scroll_offset is also in rendered (screen) lines
-                    // Use directly for 1:1 visual line correspondence
-                    editor_row as usize
-                } else {
-                    // Wrap OFF: viewport row = source line, convert to rendered line
-                    let source_line = editor_row as usize;
-                    renderer.source_to_rendered_line(source_line)
-                };
-                renderer.set_scroll_offset(rendered_start, inner.height as usize);
-                app.editor.preview_scroll_synced_row = Some(editor_row);
+                // Editor and preview have different wrapping and block heights.
+                // Synchronize through source positions, never raw screen-row offsets.
+                let rendered_start = renderer.source_to_rendered_position(anchor.0, anchor.1);
+                renderer.set_scroll_offset(rendered_start, usize::from(inner.height));
+                app.editor.preview_scroll_synced_anchor = Some(anchor);
                 app.editor.preview_scroll_overridden = false;
             }
         }
