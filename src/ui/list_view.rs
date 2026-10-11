@@ -115,15 +115,7 @@ pub(crate) fn render_grid_tile(
         } else {
             Modifier::empty()
         });
-    // Two folder badges can overlap a wide centered glyph; use the otherwise
-    // empty middle row for the main icon in that case.
-    let icon_y = inner.y
-        + u16::from(
-            has_local_template
-                && is_pinned_folder
-                && icon_mode != crate::config::IconMode::None
-                && inner.height > 1,
-        );
+    let icon_y = inner.y;
     buf.set_style(Rect::new(inner.x, icon_y, inner.width, 1), icon_style);
     let inner_w = inner.width as usize;
     if icon_mode == crate::config::IconMode::None {
@@ -141,8 +133,10 @@ pub(crate) fn render_grid_tile(
         buf.set_string(icon_x, icon_y, icon_char.to_string(), icon_style);
     }
 
-    // Corner badges pack right-to-left so a pinned folder's template glyph
-    // never overwrites its pin. Icon-free mode leaves this corner empty.
+    // Pack badges tightly: the Unicode folder and pin each occupy two cells,
+    // so an extra gap would overlap the centered folder glyph. Use matching
+    // Octicons for the Nerd Font pin/gear to avoid mixing icon families.
+    // Icon-free mode leaves this corner empty.
     let badges = [
         (
             has_tags,
@@ -151,12 +145,12 @@ pub(crate) fn render_grid_tile(
         ),
         (
             is_pinned_folder,
-            crate::ui::get_char('\u{f4cc}', '\u{1f4cc}', icon_mode),
+            crate::ui::get_char('\u{f435}', '\u{1f4cc}', icon_mode),
             theme.pinned,
         ),
         (
             has_local_template,
-            crate::ui::get_char('\u{f013}', '\u{2699}', icon_mode),
+            crate::ui::get_char('\u{f423}', '\u{2699}', icon_mode),
             theme.muted,
         ),
     ];
@@ -182,7 +176,7 @@ pub(crate) fn render_grid_tile(
                 Modifier::empty()
             });
         buf.set_string(x, inner.y, glyph.to_string(), style);
-        badge_right = x.saturating_sub(1);
+        badge_right = x;
     }
 
     // --- name: sanitize, truncate to inner width, center, write on the bottom row (row 2) ---
@@ -868,7 +862,7 @@ pub fn draw_list_view(frame: &mut Frame, app: &mut App) {
                 (
                     "Pinned",
                     Some(crate::ui::get_icon(
-                        "\u{f4cc}",
+                        "\u{f435}",
                         "\u{1f4cc}",
                         app.config.ui.icon_mode,
                     )),
@@ -1301,7 +1295,7 @@ pub fn draw_list_view(frame: &mut Frame, app: &mut App) {
                             app.app_theme.text
                         };
                         let ic = if s.pinned {
-                            crate::ui::get_char('\u{f4cc}', '\u{1f4cc}', app.config.ui.icon_mode)
+                            crate::ui::get_char('\u{f435}', '\u{1f4cc}', app.config.ui.icon_mode)
                         } else if *is_clin {
                             crate::ui::get_char('\u{f023}', '\u{1f512}', app.config.ui.icon_mode)
                         } else if *is_draw {
@@ -2375,6 +2369,63 @@ mod tests {
             column,
             row,
             modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn grid_folder_badges_keep_main_icon_on_original_row_in_all_icon_modes() {
+        use crate::config::IconMode;
+        use unicode_width::UnicodeWidthChar;
+
+        let _lock = crate::config::ConfigTestGuard::lock();
+        let (_temp_dir, app) = grid_test_app(0);
+        let area = Rect::new(0, 0, GRID_TILE_W, GRID_TILE_H);
+        for mode in [IconMode::Nerd, IconMode::Unicode, IconMode::None] {
+            for (pin, template) in [(false, false), (true, false), (false, true), (true, true)] {
+                let mut buffer = ratatui::buffer::Buffer::empty(area);
+                let icon = crate::ui::get_char('\u{f07b}', '\u{1f4c1}', mode);
+                render_grid_tile(
+                    &mut buffer,
+                    area,
+                    GridTileSpec {
+                        icon_char: icon,
+                        text_label: "F",
+                        glyph_color: app.app_theme.folder,
+                        raw_name: "Folder",
+                        is_selected: true,
+                        in_selection: false,
+                        is_hovered: false,
+                        has_tags: false,
+                        has_local_template: template,
+                        is_pinned_folder: pin,
+                        is_muted: false,
+                    },
+                    &app.app_theme,
+                    mode,
+                );
+                let main = if mode == IconMode::None { 'F' } else { icon };
+                let main_width = main.width().unwrap_or(1) as u16;
+                let main_x = 1 + (GRID_TILE_W - 2 - main_width) / 2;
+                assert_eq!(
+                    buffer.cell((main_x, 1)).unwrap().symbol(),
+                    main.to_string(),
+                    "main icon moved: {mode:?}, pin={pin}, template={template}"
+                );
+                assert_eq!(buffer.cell((main_x, 2)).unwrap().symbol(), " ");
+                let mut badge_right = GRID_TILE_W - 1;
+                for (enabled, glyph) in [
+                    (pin, crate::ui::get_char('\u{f435}', '\u{1f4cc}', mode)),
+                    (template, crate::ui::get_char('\u{f423}', '\u{2699}', mode)),
+                ] {
+                    if !enabled || glyph == ' ' {
+                        continue;
+                    }
+                    let x = badge_right - glyph.width().unwrap_or(1) as u16;
+                    assert!(x >= main_x + main_width, "badge overlaps main icon");
+                    assert_eq!(buffer.cell((x, 1)).unwrap().symbol(), glyph.to_string());
+                    badge_right = x;
+                }
+            }
         }
     }
 

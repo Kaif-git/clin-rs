@@ -168,6 +168,19 @@ fn folder_template_glyph_renders_in_both_layouts_without_overwriting_pin() {
                     if path == "book" {
                         assert!(badges.contains('⚙'), "{badges}");
                         assert!(badges.contains('📌'), "{badges}");
+                        assert!(
+                            badges.contains('📁'),
+                            "folder icon moved off badge row: {badges}"
+                        );
+                        assert!(
+                            !row(
+                                buffer,
+                                tile.rect.y + 2,
+                                tile.rect.x + 1,
+                                tile.rect.right() - 1
+                            )
+                            .contains('📁')
+                        );
                     } else {
                         assert!(!badges.contains('⚙'), "{path}: {badges}");
                     }
