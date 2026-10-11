@@ -46,10 +46,11 @@ callbacks never execute. Substitution notices appear below the diagram.
 Invalid, unsupported, too-wide or oversized diagrams retain their fenced source
 with an explanation, never a silently incomplete graph. Preview limits are
 64 KiB per block, 128 nodes, 256 edges, 32 groups, 16 nesting levels, 240 columns
-and 512 diagram rows. Pre-parse budgets also cap grouping syntax at 32 unquoted
-`&` separators and data nesting at 16 levels to prevent expansion before model
-allocation. YAML anchors/aliases are rejected; quote literal `&` or `*` characters
-in frontmatter configuration. Rejected input remains visible as source.
+and 512 diagram rows. Conservative pre-parse chart-body budgets also cap raw `&` characters at 32,
+opening delimiters at 256, and `subgraph` words at 32, including labels/comments.
+YAML frontmatter uses a non-expanding scanner with 16-level structure limit;
+anchors/aliases are rejected, while literal `&`/`*` in strings remain supported.
+Rejected input remains visible as source rather than risking parser expansion.
 Rendering runs in the existing background Markdown layout pipeline and cache;
 no temporary files containing note text are created.
 

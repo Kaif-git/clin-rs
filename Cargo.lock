@@ -175,6 +175,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arraydeque"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1183,7 +1189,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2417e237094dfd115a4aa11b2a3dc6cda45e8d36572a7862ba9a48402f7441a3"
 dependencies = [
  "glam",
- "hashlink",
+ "hashlink 0.8.4",
  "petgraph 0.6.5",
  "quad-rand",
 ]
@@ -1497,6 +1503,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8094feaf31ff591f651a2664fb9cfd92bba7a60ce3197265e9482ebe753c8f7"
 dependencies = [
  "hashbrown 0.14.5",
+]
+
+[[package]]
+name = "hashlink"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
+dependencies = [
+ "hashbrown 0.15.5",
 ]
 
 [[package]]
@@ -2856,7 +2871,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 [[package]]
 name = "pinstar"
 version = "1.0.1"
-source = "git+https://github.com/reekta92/pinstar?rev=2b40431dff20#2b40431dff209702e3e7b0c0b59004e94a4a8e5c"
+source = "git+https://github.com/reekta92/pinstar?rev=a28debb5ebb5#a28debb5ebb572a4b10b99b8dc9a979bb6a9f6b2"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -2872,6 +2887,7 @@ dependencies = [
  "serde_json",
  "unicode-segmentation",
  "uuid",
+ "yaml-rust2",
 ]
 
 [[package]]
@@ -4994,6 +5010,16 @@ name = "y4m"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a5a4b21e1a62b67a2970e6831bc091d7b87e119e7f9791aef9702e3bef04448"
+
+[[package]]
+name = "yaml-rust2"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2462ea039c445496d8793d052e13787f2b90e750b833afee748e601c17621ed9"
+dependencies = [
+ "arraydeque",
+ "hashlink 0.10.0",
+]
 
 [[package]]
 name = "yoke"
