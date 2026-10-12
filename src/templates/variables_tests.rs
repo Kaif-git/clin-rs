@@ -11,7 +11,7 @@ fn storage(root: &Path) -> Storage {
         config_dir: root.join(".clin"),
         notes_dir: root.to_path_buf(),
         templates_dir: root.join(".clin/templates"),
-        key: [0u8; 32],
+        key: rand::random(),
         skip_dir_patterns: Vec::new(),
         rename_on_title_change: true,
     }
