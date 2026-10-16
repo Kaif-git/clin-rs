@@ -1265,8 +1265,11 @@ pub fn draw_ui(frame: &mut Frame, app: &mut App, focus: EditFocus) {
                             } else {
                                 ""
                             };
-                            let header_text =
-                                format!("{arrow}{label} ({}{trunc_suffix})", hit.match_count);
+                            let header_text = if let Some(score) = hit.semantic_score {
+                                format!("{arrow}{label} (≈ related {score:.2})")
+                            } else {
+                                format!("{arrow}{label} ({}{trunc_suffix})", hit.match_count)
+                            };
                             ListItem::new(crate::ui::styled_result_line(
                                 &header_text,
                                 &app.app_theme,

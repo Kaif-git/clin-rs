@@ -25,7 +25,7 @@ The Grid layout displays notes as cards. It is optimized for visual recognition 
 The Tree layout provides a hierarchical view of your folders and notes, similar to a traditional file explorer. It is ideal for navigating complex vault structures.
 - **Smart Virtual Folders**: Dynamic groups like *Today* (updated in last 24h), *This Week*, *Untagged*, and one folder per *Tag*. Control with `[features] smart_folders = true` (enabled by default). *This Week* means updated within the last seven days, not the calendar week. Custom rules live in `[list] custom_smart_folders`.
 - **Folder Pinning**: Pin folders to the top of the list for quick access by selecting a folder and pressing the pin key (`p`).
-- **Inline Rename**: Rename notes and folders directly in the tree list by pressing the rename key (`r`). Press `Enter` to commit, or `Esc` to cancel.
+- **Inline Rename**: Rename notes and folders directly in the tree list by pressing the rename key (`r`). Press `Enter` to commit, or `Esc` to cancel. Renaming a note that other notes link to pops up an offer to rewrite those `[[old]]` links to the new title (`|alias` text kept); the note open in the editor, if affected, is patched in its live buffer so autosave cannot clobber the fix.
 - **Drag-to-Move**: Click and drag notes onto folders to move them. Alternatively, use the default `U` keyboard shortcut (`g u` in Helix/Vim presets) to move the selected note to its parent directory.
 ---
 
@@ -61,7 +61,7 @@ When creating a new note (via the "Create new..." tile or keyboard shortcuts), a
 - **Folders**: Organize notes into nested directories. A gear badge marks folders containing their own `.clin-template.toml` (not inherited-only variables); it appears beside the tree folder label or in the grid tile corner alongside its pin badge. With templates enabled, the config appears inside its folder as a muted selectable item regardless of hidden-file settings. Enter/double-click opens the validated config editor; the preview shows TOML. Configs are not counted/indexed as notes or included in bulk note actions. See [Template System](TEMPLATES.md#folder-local-custom-variables).
 
 ### Discovery
-- **Searching**: Use the built-in search popup to find notes by title or content.
+- **Searching**: Use the built-in search popup to find notes by title or content. With `[graf.semantic] enabled`, a **Related** section (`≈ related 0.72`) lists notes similar in meaning even with no shared keywords (top 8, same threshold).
 - **Filtering**: Search tokens include `f:` (folder), `g:` (body/grep), `p:` (pinned), `t:` (tag), and `sn:` (exclusive subnote title/content search). Plain text searches titles; tag and subnote tokens require their features to be enabled.
 
 ## Bottom Strip Widgets

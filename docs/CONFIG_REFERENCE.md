@@ -134,6 +134,8 @@ Legacy per-section flags (`[image] enabled`, `[backup] enabled`, `[goals] enable
 | `date_format` | `String` | `"%Y-%m-%d %H:%M"` | Format used by the insert-date action |
 | `soft_wrap` | `bool` | `false` | Soft-wrap the editor body |
 | `copy_on_select` | `bool` | `true` | Copy to clipboard immediately when a mouse drag selects text; `false` keeps the selection for the copy keybind |
+| `auto_close_pairs` | `bool` | `true` | Auto-close `() [] {} "" '' ``` in the editor body; typing the closer skips over it, Backspace between an empty pair deletes both |
+| `link_suggestions` | `bool` | `true` | Suggest existing note titles while typing `[[...]]` links in the editor body |
 | `edit_mode_highlight` | `bool` | `true` | Apply Markdown syntax highlighting to the editable body |
 | `ghost_syntax` | `bool` | `true` | Visually dim markdown delimiters (brackets, URLs, etc.) in edit view |
 | `extended_markdown_features` | `bool` | `true` | Enable extended markdown highlighting features (bare URLs, bold italic combinations, description lists, footnotes) |
@@ -431,6 +433,27 @@ All optional. Hex color strings like `"#ff6600"`. Override theme defaults.
 |---|---|---|---|
 | `max_results` | `usize` | `20` | Maximum search results |
 | `max_visible` | `usize` | `10` | Maximum visible results at once |
+
+### `[graf.semantic]`
+
+Local embedding overlay (`all-MiniLM-L6-v2`, ONNX, fully offline) that adds
+similarity edges between related-but-unlinked notes, so the graph clusters by
+topic without requiring `[[wikilinks]]` everywhere. The same vectors also power
+the **Related** section of note search (`≈ related 0.72` rows for notes with no
+shared keywords). Disabled by default: the first enable downloads the model
+(~80MB) and embeds the vault on graph open (search warms the same cache in the
+background).
+Vectors are cached per vault (`.clin/semantic_cache.json`); only changed notes
+are re-embedded. Semantic edges render like normal edges; deleting one hides it
+for the session only (a refresh restores it — add a real `[[link]]` to pin it).
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | `bool` | `false` | Enable the semantic similarity overlay |
+| `threshold` | `f32` | `0.45` | Minimum cosine similarity for an edge (0–1; higher = fewer, safer edges) |
+| `top_k` | `usize` | `3` | Max similarity edges added per note |
+| `max_chars` | `usize` | `2000` | Note text chars fed to the model (title + tags + body prefix) |
+| `include_tags` | `bool` | `true` | Mix tags into the embedded text |
 ### `[backup]`
 
 | Option | Type | Default | Description |
@@ -534,6 +557,11 @@ drag_sensitivity = 1.0
 [graf.search]
 max_results = 20
 max_visible = 10
+
+[graf.semantic]
+enabled = false
+threshold = 0.45
+top_k = 3
 ```
 
 ---
@@ -641,6 +669,11 @@ These global handlers take precedence over per-view bindings.
 | `insert_date` | `Ctrl+;` | Insert date/time |
 | `toggle_outline` | `Ctrl+o` | Toggle outline pane |
 | `toggle_links` | `Ctrl+b` | Toggle links pane |
+| `toggle_file_tree` | `Ctrl+e` | Toggle file-tree sidebar |
+| `new_tab` | `Ctrl+n` | Open new note tab |
+| `close_tab` | `Ctrl+w` | Close current tab |
+| `next_tab` | `Ctrl+Tab` | Next tab |
+| `prev_tab` | `Ctrl+Shift+Tab` | Previous tab |
 | `preview_link` | `Alt+l` | Preview linked note under cursor |
 
 ### Help Actions (`[help]`)
@@ -822,7 +855,7 @@ These global handlers take precedence over per-view bindings.
 
 ## Migration Note
 
-The old `graf.toml` file is **no longer used**. All graf options (`[graf.visual]`, `[graf.physics]`, `[graf.interaction]`, `[graf.filter]`, `[graf.search]`) are now part of `config.toml`. The system auto-migrates settings from `graf.toml` on first read for backward compatibility.
+The old `graf.toml` file is **no longer used**. All graf options (`[graf.visual]`, `[graf.physics]`, `[graf.interaction]`, `[graf.filter]`, `[graf.search]`, `[graf.semantic]`) are now part of `config.toml`. The system auto-migrates settings from `graf.toml` on first read for backward compatibility (`[graf.semantic]` is new and keeps its defaults).
 
 ---
 

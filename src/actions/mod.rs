@@ -321,6 +321,7 @@ pub static ACTIONS: std::sync::LazyLock<Vec<Box<dyn Action>>> = std::sync::LazyL
         Box::new(settings::ToggleGraphShowLegendAction),
         Box::new(settings::ToggleGraphShowMinimapAction),
         Box::new(settings::ToggleGraphShowOrphanAction),
+        Box::new(settings::ToggleSemanticOverlayAction),
         Box::new(info::ShowInfoAction),
         Box::new(import::ImportAction {
             source: crate::popups::ImportSource::File,

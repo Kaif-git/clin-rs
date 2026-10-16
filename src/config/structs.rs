@@ -457,6 +457,8 @@ pub struct EditorConfig {
     pub extended_markdown_features: bool,
     pub soft_wrap: bool,
     pub copy_on_select: bool,
+    pub auto_close_pairs: bool,
+    pub link_suggestions: bool,
     pub text_align: TextAlignment,
     pub zen_padding_percent: u16,
 }
@@ -479,6 +481,8 @@ impl Default for EditorConfig {
             extended_markdown_features: true,
             soft_wrap: false,
             copy_on_select: true,
+            auto_close_pairs: true,
+            link_suggestions: true,
             text_align: TextAlignment::default(),
             zen_padding_percent: 15,
         }
@@ -499,6 +503,8 @@ pub struct GrafConfig {
     #[serde(default)]
     pub search: SearchConfig,
     #[serde(default)]
+    pub semantic: SemanticConfig,
+    #[serde(default)]
     pub preview_enabled: bool,
     pub max_node: usize,
 }
@@ -511,8 +517,36 @@ impl Default for GrafConfig {
             interaction: InteractionConfig::default(),
             filter: FilterConfig::default(),
             search: SearchConfig::default(),
+            semantic: SemanticConfig::default(),
             preview_enabled: false,
             max_node: 500,
+        }
+    }
+}
+
+/// Semantic-similarity overlay for the graph view (all-MiniLM-L6-v2, ONNX).
+///
+/// Disabled by default: the first enable downloads the model (~80MB) and
+/// embeds the vault on graph open. Vectors are cached per vault under
+/// `.clin/semantic_cache.json` and only dirty notes are re-embedded.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct SemanticConfig {
+    pub enabled: bool,
+    pub threshold: f32,
+    pub top_k: usize,
+    pub max_chars: usize,
+    pub include_tags: bool,
+}
+
+impl Default for SemanticConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold: 0.45,
+            top_k: 3,
+            max_chars: 2000,
+            include_tags: true,
         }
     }
 }

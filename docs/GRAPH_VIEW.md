@@ -1,6 +1,6 @@
 # Graph View (Graf)
 
-Technical docs for the force-directed graph module — visualizes the note corpus as an interactive node graph based on `[[wikilinks]]` and tags.
+Technical docs for the force-directed graph module — visualizes the note corpus as an interactive node graph based on `[[wikilinks]]` and tags, with an optional local-embedding overlay for similarity edges.
 
 ---
 
@@ -23,6 +23,24 @@ Clin creates `graf::NodeSpec` values from note summaries (ID, title, encryption 
 5. Build force nodes and edges among retained candidates.
 
 Clin does not expose an `exclude_patterns` graph option. Vault listing rules and disabled file-view features still affect which notes reach the graph.
+
+When `[graf.semantic] enabled = true`, clin additionally embeds note text with
+`all-MiniLM-L6-v2` (fastembed ONNX, local only; see `src/semantic.rs`) and merges
+up to `top_k` similarity edges per note (`cosine >= threshold`, skipping pairs
+already linked explicitly) into the `NodeSpec.links` above — so related notes
+cluster even with no `[[wikilink]]`. Vectors cache per vault at
+`.clin/semantic_cache.json`; embedding runs only on graph open/refresh, never
+while typing. `.draw`/`.canvas`/`.clin` notes are skipped. Toggle at runtime with `Shift+E`
+(palette: `settings.semantic_overlay`); deleting a similarity edge hides it for
+the session only — refresh restores it, a real `[[link]]` pins it.
+
+### Hover preview
+
+Moving the mouse over a node (no click or drag) shows its name in the status
+bar (`◉ Title`), lights the upstream hover ring, and switches the preview pane
+to its content. Moving away falls back to the keyboard selection; any keypress
+clears the hover. Suppressed while dragging, panning, or when a popup/menu
+owns the mouse.
 
 ```rust
 pub struct GraphNodeData {
@@ -144,6 +162,7 @@ The Graph view supports a preview pane identically to the List view. When enable
 | `Shift+L` | Toggle legend |
 | `Shift+G` | Toggle grid |
 | `Shift+P` | Toggle preview pane |
+| `Shift+E` | Toggle semantic overlay (rebuilds edges; persists to config) |
 | `Shift+S` | Toggle status bar |
 | `r` | Refresh simulation |
 | `Ctrl+R` | Reload config |
@@ -191,6 +210,7 @@ All graf options are stored in the main `config.toml` under sections:
 | `[graf.interaction]` | Zoom factor and drag sensitivity |
 | `[graf.filter]` | Node inclusion/exclusion rules |
 | `[graf.search]` | Search popup behavior |
+| `[graf.semantic]` | Local embedding similarity overlay (off by default) |
 See [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md) for full option documentation — that is the authoritative reference for all graf config sections and keys.
 
 ---

@@ -727,7 +727,11 @@ impl App {
         if self.graph_preview.is_some() && self.graph_preview_sig == sig {
             return;
         }
-        let specs = crate::graf_adapter::note_specs(&self.notes, &self.config.features);
+        let specs = crate::graf_adapter::note_specs(
+            &self.notes,
+            &self.config.features,
+            &std::collections::HashMap::new(),
+        );
         let settings = crate::graf_adapter::clin_settings(&self.config);
         match graf::GraphState::from_specs(&specs, &settings) {
             Ok(mut gs) => {
@@ -1080,6 +1084,18 @@ impl App {
         self.flag_status_persist(val, "Orphan nodes shown", "Orphan nodes hidden", |c, v| {
             c.graf.filter.show_orphan = v
         });
+    }
+
+    pub fn toggle_semantic_overlay(&mut self) {
+        self.config.graf.semantic.enabled = !self.config.graf.semantic.enabled;
+        let val = self.config.graf.semantic.enabled;
+        // Takes effect on next graph open/refresh (Shift+E toggles it live).
+        self.flag_status_persist(
+            val,
+            "Semantic overlay enabled",
+            "Semantic overlay disabled",
+            |c, v| c.graf.semantic.enabled = v,
+        );
     }
 }
 

@@ -755,6 +755,23 @@ toggle_action!(
     }
 );
 
+toggle_action!(
+    ToggleSemanticOverlayAction,
+    "settings.semantic_overlay",
+    "Toggle Semantic Overlay",
+    "Show or hide embedding similarity edges in the graph (and Related search results)",
+    ActionCategory::Settings,
+    "\u{f0eb}",
+    "\u{1f9e0}",
+    toggle_semantic_overlay,
+    app,
+    if app.config.graf.semantic.enabled {
+        "On"
+    } else {
+        "Off"
+    }
+);
+
 pub struct ConfigureSmartFoldersAction;
 impl Action for ConfigureSmartFoldersAction {
     fn id(&self) -> std::borrow::Cow<'static, str> {

@@ -1,6 +1,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 pub mod actions;
 pub mod app_theme;
+pub(crate) mod auto_pairs;
 pub mod backup {
     pub mod app;
     pub mod git_ops;
@@ -57,6 +58,7 @@ pub mod perf_tests;
 pub mod pinstar_adapter;
 pub mod popups;
 pub mod preview;
+pub mod semantic;
 pub mod session;
 pub mod setup;
 pub mod snapshot;

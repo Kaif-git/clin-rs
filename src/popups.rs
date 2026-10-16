@@ -31,6 +31,16 @@ pub enum ConfirmAction {
         path: String,
     },
     RemoveAllTagsFromSelected,
+    CreateNoteFromWikilink {
+        folder: String,
+        title: String,
+    },
+    UpdateBacklinks {
+        old_title: String,
+        old_id: String,
+        new_title: String,
+        note_ids: Vec<String>,
+    },
 }
 
 pub struct ConfirmPopup {
@@ -213,13 +223,18 @@ pub struct SearchLineHit {
     pub snippet: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SearchNoteHit {
     pub note_id: std::sync::Arc<str>,
     pub match_count: usize,
     pub lines: Vec<SearchLineHit>,
     pub truncated: bool,
+    /// Cosine vs the query embedding for Related (semantic) rows; `None`
+    /// for literal substring hits. `f32` can't be `Eq` — hence manual impl.
+    pub semantic_score: Option<f32>,
 }
+
+impl Eq for SearchNoteHit {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SubnoteHit {

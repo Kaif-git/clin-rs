@@ -1,4 +1,5 @@
 use crate::popups::{SearchLineHit, SearchNoteHit};
+use crate::semantic::Embedder;
 use crate::storage::Storage;
 use rayon::prelude::*;
 use std::sync::Arc;
@@ -6,9 +7,26 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::time::Duration;
 
+/// Model reused across requests on the single search-worker thread, so only
+/// the first semantic query pays ONNX init (later ones embed in milliseconds).
+static EMBEDDER: std::sync::LazyLock<std::sync::Mutex<Embedder>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(Embedder::unload()));
+
 pub(crate) struct SearchRequest {
     pub generation: u64,
     pub query: String,
+    pub candidate_ids: Box<[Arc<str>]>,
+    /// Whole-note semantic search over these ids (usually wider than the
+    /// title-matched grep candidates). `None` disables it.
+    pub semantic: Option<SemanticQuery>,
+}
+
+#[derive(Clone)]
+pub(crate) struct SemanticQuery {
+    /// Raw text to embed (title query, falling back to grep text).
+    pub text: String,
+    pub threshold: f32,
+    pub top_k: usize,
     pub candidate_ids: Box<[Arc<str>]>,
 }
 
@@ -19,6 +37,13 @@ pub(crate) enum SearchEvent {
         finished: bool,
         errors: usize,
         globally_truncated: bool,
+    },
+    /// Related (embedding) hits, sent once per request after the final batch.
+    /// Rendered as single rows inside the existing results list.
+    Semantic {
+        generation: u64,
+        hits: Vec<SearchNoteHit>,
+        failed: bool,
     },
 }
 
@@ -90,6 +115,7 @@ fn run_search(
     let mut global_line_count = 0usize;
     let mut cumulative_errors = 0usize;
     let mut globally_truncated = false;
+    let mut matched_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     let chunks = req.candidate_ids.chunks(128);
 
@@ -156,11 +182,13 @@ fn run_search(
             }
 
             if !lines.is_empty() {
+                matched_ids.insert(id_arc.to_string());
                 hits.push(SearchNoteHit {
                     note_id: id_arc,
                     match_count,
                     lines,
                     truncated: note_truncated,
+                    semantic_score: None,
                 });
             }
         }
@@ -195,6 +223,93 @@ fn run_search(
             finished: true,
             errors: cumulative_errors,
             globally_truncated,
+        },
+        gen_atomic,
+        current_gen,
+    );
+
+    // Related (embedding) pass: whole-note similarity for notes the literal
+    // scan missed. Runs after literal batches so Related rows land at the
+    // bottom of the results list.
+    if let Some(sem) = &req.semantic
+        && gen_atomic.load(Ordering::SeqCst) == current_gen
+    {
+        run_semantic(
+            storage,
+            sem,
+            &matched_ids,
+            current_gen,
+            gen_atomic,
+            event_tx,
+        );
+    }
+}
+
+/// Score `sem.candidate_ids` against the embedded query, skipping notes the
+/// literal pass already matched (they render with their line hits instead).
+fn run_semantic(
+    storage: &Storage,
+    sem: &SemanticQuery,
+    skip_ids: &std::collections::HashSet<String>,
+    current_gen: u64,
+    gen_atomic: &Arc<AtomicU64>,
+    event_tx: &SyncSender<SearchEvent>,
+) {
+    let mut texts: Vec<(String, String)> = Vec::new();
+    for id_arc in sem.candidate_ids.iter() {
+        if gen_atomic.load(Ordering::SeqCst) != current_gen {
+            return;
+        }
+        if skip_ids.contains(id_arc.as_ref()) || !crate::semantic::is_embeddable(id_arc) {
+            continue;
+        }
+        let Ok(note) = storage.load_note(id_arc) else {
+            continue;
+        };
+        texts.push((
+            id_arc.to_string(),
+            crate::semantic::build_embed_text(&note.title, &note.tags, &note.content, 2000, true),
+        ));
+        if texts.len() >= 2000 {
+            break;
+        }
+    }
+    if gen_atomic.load(Ordering::SeqCst) != current_gen {
+        return;
+    }
+    let scored = {
+        let mut embedder = EMBEDDER.lock().unwrap_or_else(|e| e.into_inner());
+        crate::semantic::query_top(
+            &mut embedder,
+            &sem.text,
+            &texts,
+            &storage.data_dir,
+            sem.threshold,
+            sem.top_k,
+        )
+    };
+    let (hits, failed) = match scored {
+        Ok(pairs) => (
+            pairs
+                .into_iter()
+                .map(|(id, score)| SearchNoteHit {
+                    note_id: Arc::from(id.as_str()),
+                    match_count: 0,
+                    lines: Vec::new(),
+                    truncated: false,
+                    semantic_score: Some(score),
+                })
+                .collect(),
+            false,
+        ),
+        Err(_) => (Vec::new(), true),
+    };
+    send_event(
+        event_tx,
+        SearchEvent::Semantic {
+            generation: current_gen,
+            hits,
+            failed,
         },
         gen_atomic,
         current_gen,
@@ -245,6 +360,7 @@ mod tests {
             generation: 1,
             query: "target_keyword".to_string(),
             candidate_ids: vec![Arc::from(saved_id.as_str())].into_boxed_slice(),
+            semantic: None,
         };
         let (tx, rx) = sync_channel(10);
         let gen_atomic = Arc::new(AtomicU64::new(1));
@@ -255,7 +371,10 @@ mod tests {
         while let Ok(evt) = rx.try_recv() {
             let SearchEvent::Batch {
                 hits: batch_hits, ..
-            } = evt;
+            } = evt
+            else {
+                continue;
+            };
             hits.extend(batch_hits);
         }
 

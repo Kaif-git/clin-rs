@@ -234,6 +234,9 @@ impl App {
 
         let mut candidate_ids: Vec<Arc<str>> = Vec::new();
         let mut title_result_ids: Vec<Arc<str>> = Vec::new();
+        // Semantic (Related) candidates: every filter-passing note, not just
+        // title matches — this is what finds notes with no shared keywords.
+        let mut semantic_ids: Vec<Arc<str>> = Vec::new();
 
         for (_, note) in self.visible_notes() {
             if parsed.pinned_only && !note.pinned {
@@ -266,12 +269,21 @@ impl App {
                 || note.id.to_lowercase().contains(&title_query);
 
             let note_id_arc: Arc<str> = Arc::from(note.id.as_str());
+            semantic_ids.push(note_id_arc.clone());
 
             if matched_title {
                 title_result_ids.push(note_id_arc.clone());
             }
 
-            if !grep_query.is_empty() && matched_title {
+            if !grep_query.is_empty() {
+                // `g:` mode: content-scan the title matches (historic behavior).
+                if matched_title {
+                    candidate_ids.push(note_id_arc);
+                }
+            } else if !title_query.is_empty() {
+                // Plain text searches content as well as titles: every visible
+                // note is a grep candidate. The worker scans in the background
+                // (debounced, generation-guarded, line-capped).
                 candidate_ids.push(note_id_arc);
             }
         }
@@ -283,14 +295,41 @@ impl App {
             }
         }
 
-        if !grep_query.is_empty() {
+        // Related (embedding) search: whole-note similarity for the same
+        // query text, so notes with no shared keywords still surface.
+        let semantic_text = if !title_query.is_empty() {
+            title_query.clone()
+        } else {
+            grep_query.clone()
+        };
+        let semantic = if self.config.graf.semantic.enabled && !semantic_text.is_empty() {
+            Some(crate::app::search_worker::SemanticQuery {
+                text: semantic_text,
+                threshold: self.config.graf.semantic.threshold,
+                top_k: crate::semantic::SEARCH_TOP_K,
+                candidate_ids: semantic_ids.into_boxed_slice(),
+            })
+        } else {
+            None
+        };
+
+        // Literal content query: `g:` text, else the plain title text (plain
+        // queries scan content too).
+        let worker_query = if !grep_query.is_empty() {
+            grep_query.clone()
+        } else {
+            title_query.clone()
+        };
+
+        if !worker_query.is_empty() {
             let gen_num = self.search_query_generation.fetch_add(1, Ordering::SeqCst) + 1;
             self.search_status = Some("Searching…".to_string());
             self.search_debounce_deadline = Some(Instant::now() + Duration::from_millis(150));
             self.unsent_search_request = Some(crate::app::search_worker::SearchRequest {
                 generation: gen_num,
-                query: grep_query,
+                query: worker_query,
                 candidate_ids: candidate_ids.into_boxed_slice(),
+                semantic,
             });
         } else {
             self.search_query_generation.fetch_add(1, Ordering::SeqCst);
@@ -457,6 +496,38 @@ impl App {
                                     "Search completed with {errors} read error(s)"
                                 ));
                             }
+                        }
+                        changed = true;
+                    }
+                }
+                SearchEvent::Semantic {
+                    generation,
+                    hits,
+                    failed,
+                } => {
+                    if generation == cur_gen {
+                        if let Some(crate::popups::ActivePopup::Search(popup)) =
+                            &mut self.popups.active
+                        {
+                            if popup.grep_generation != generation {
+                                popup.grep_results.clear();
+                                popup.grep_row_offsets.clear();
+                                popup.grep_expanded.clear();
+                                popup.grep_selected = 0;
+                                popup.globally_truncated = false;
+                                popup.read_errors = 0;
+                                popup.grep_generation = generation;
+                            }
+                            popup.grep_results.extend(hits);
+                            popup.rebuild_grep_offsets();
+                            if popup.grep_selected >= popup.total_grep_rows() {
+                                popup.grep_selected = popup.total_grep_rows().saturating_sub(1);
+                            }
+                        }
+                        if failed {
+                            self.set_temporary_status(
+                                "Related search unavailable (embedding model failed to load)",
+                            );
                         }
                         changed = true;
                     }
@@ -695,10 +766,79 @@ mod tests {
     }
 
     #[test]
+    fn plain_text_searches_note_content_not_just_titles() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut storage = make_test_storage(tmp.path());
+        for (file, title, content) in [
+            ("alpha.md", "Alpha", "nothing relevant here"),
+            ("beta.md", "Beta", "a line about zebras grazing"),
+        ] {
+            storage
+                .save_note(
+                    file,
+                    &crate::storage::Note {
+                        title: title.to_string(),
+                        content: content.to_string(),
+                        updated_at: 1000,
+                        tags: vec![],
+                    },
+                )
+                .unwrap();
+        }
+        let mut app = crate::app::App::new(storage).unwrap();
+        app.config.graf.semantic.enabled = false;
+        app.begin_search();
+        if let Some(crate::popups::ActivePopup::Search(popup)) = &mut app.popups.active {
+            popup.input.insert_str("zebra");
+        }
+        app.update_search();
+
+        // No title matches, but a content search must be queued anyway.
+        let popup = match &app.popups.active {
+            Some(crate::popups::ActivePopup::Search(p)) => p,
+            _ => panic!("search popup missing"),
+        };
+        assert!(popup.title_result_ids.is_empty());
+        let req = app
+            .unsent_search_request
+            .as_ref()
+            .expect("plain text queues a content search");
+        assert_eq!(req.query, "zebra");
+
+        // Drain the real worker until the content hit lands.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            app.handle_search_events();
+            let done = app.popups.active.as_ref().is_some_and(|p| {
+                matches!(p, crate::popups::ActivePopup::Search(sp) if !sp.grep_results.is_empty())
+            });
+            if done || std::time::Instant::now() > deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let popup = match &app.popups.active {
+            Some(crate::popups::ActivePopup::Search(p)) => p,
+            _ => panic!("search popup missing"),
+        };
+        assert!(
+            popup
+                .grep_results
+                .iter()
+                .any(|h| h.note_id.as_ref() == "beta.md" && h.semantic_score.is_none()),
+            "content hit missing: {:?}",
+            popup.grep_results,
+        );
+    }
+
+    #[test]
     fn clearing_grep_filter_cancels_pending_request() {
         let tmp = tempfile::TempDir::new().unwrap();
         let storage = make_test_storage(tmp.path());
         let mut app = crate::app::App::new(storage).unwrap();
+        // Hermetic: `App::new` loads the machine config, which may enable the
+        // semantic overlay. This test asserts grep-cancellation behavior.
+        app.config.graf.semantic.enabled = false;
         app.begin_search();
 
         if let Some(crate::popups::ActivePopup::Search(popup)) = &mut app.popups.active {
@@ -713,8 +853,14 @@ mod tests {
         }
         app.update_search();
 
-        assert!(app.unsent_search_request.is_none());
-        assert!(app.search_debounce_deadline.is_none());
+        // Plain text falls back to literal content search over all notes.
+        let req = app
+            .unsent_search_request
+            .as_ref()
+            .expect("plain text queues a content search");
+        assert_eq!(req.query, "zebra");
+        assert!(req.semantic.is_none());
+        assert!(app.search_debounce_deadline.is_some());
 
         let popup = match &app.popups.active {
             Some(crate::popups::ActivePopup::Search(p)) => p,

@@ -206,18 +206,55 @@ pub fn clin_theme(
 pub fn note_specs(
     summaries: &[crate::storage::NoteSummary],
     features: &crate::config::FeaturesConfig,
+    semantic_extra: &std::collections::HashMap<String, Vec<String>>,
 ) -> Vec<NodeSpec> {
     summaries
         .iter()
         .filter(|n| features.file_view_enabled(&n.id))
-        .map(|n| NodeSpec {
-            id: n.id.clone(),
-            title: n.title.clone(),
-            tags: n.tags.clone(),
-            folder: n.folder.clone(),
-            links: n.links.clone(),
+        .map(|n| {
+            let mut links = n.links.clone();
+            if let Some(extra) = semantic_extra.get(&n.id) {
+                for title in extra {
+                    if !links.iter().any(|l| l.eq_ignore_ascii_case(title)) {
+                        links.push(title.clone());
+                    }
+                }
+            }
+            NodeSpec {
+                id: n.id.clone(),
+                title: n.title.clone(),
+                tags: n.tags.clone(),
+                folder: n.folder.clone(),
+                links,
+            }
         })
         .collect()
+}
+
+/// Load semantic-similarity extras (`id -> [titles]`), never failing the graph.
+/// On model/cache error the overlay is skipped and the reason is recorded.
+fn load_semantic_extras(
+    config: &ClinConfig,
+    storage: &Storage,
+    summaries: &[crate::storage::NoteSummary],
+    config_errors: &mut Vec<String>,
+) -> std::collections::HashMap<String, Vec<String>> {
+    if !config.graf.semantic.enabled {
+        return std::collections::HashMap::new();
+    }
+    match crate::semantic::compute_semantic_extras(
+        summaries,
+        storage,
+        &config.features,
+        &config.graf.semantic,
+        &storage.data_dir,
+    ) {
+        Ok(extra) => extra,
+        Err(e) => {
+            config_errors.push(format!("Semantic graph overlay off: {e:#}"));
+            std::collections::HashMap::new()
+        }
+    }
 }
 
 // ── Plugin state ────────────────────────────────────────────────────────────
@@ -293,6 +330,9 @@ pub struct GrafPlugin {
     pub seq_matcher: crate::keybinds::KeyMatcher,
     pub mouse_pos: Option<(u16, u16)>,
     pub preview_drag_last_pos: Option<(u16, u16)>,
+    /// Note id under the mouse cursor (updated on move, no click needed).
+    /// Drives hover preview + status title; cleared on any keypress.
+    pub hover_note_id: Option<String>,
     canvas_fps_sampler: CanvasFpsSampler,
 }
 
@@ -307,13 +347,16 @@ impl GrafPlugin {
         config: &ClinConfig,
         storage: Storage,
         summaries: Vec<crate::storage::NoteSummary>,
-        config_errors: Vec<String>,
+        mut config_errors: Vec<String>,
         keybinds: Keybinds,
         seq_matcher: crate::keybinds::KeyMatcher,
     ) -> anyhow::Result<Self> {
         let settings = clin_settings(config);
-        let graph_state =
-            GraphState::from_specs(&note_specs(&summaries, &config.features), &settings)?;
+        let semantic_extra = load_semantic_extras(config, &storage, &summaries, &mut config_errors);
+        let graph_state = GraphState::from_specs(
+            &note_specs(&summaries, &config.features, &semantic_extra),
+            &settings,
+        )?;
         let state = Arc::new(RwLock::new(graph_state));
         let graph_kill_tx = graf::start_physics(state.clone(), &settings);
 
@@ -349,6 +392,7 @@ impl GrafPlugin {
             seq_matcher,
             preview_drag_last_pos: None,
             mouse_pos: None,
+            hover_note_id: None,
             canvas_fps_sampler: CanvasFpsSampler::default(),
         })
     }
@@ -381,6 +425,7 @@ impl GrafPlugin {
         self.preview_content = None;
         self.preview_note_id = None;
         self.preview_request_key = None;
+        self.hover_note_id = None;
 
         let mut settings = self.settings_for(config);
         if self.focus_note_ids.is_some() {
@@ -401,9 +446,15 @@ impl GrafPlugin {
             }
             None => &self.notes,
         };
-        if let Ok(graph_state) =
-            GraphState::from_specs(&note_specs(notes, &config.features), &settings)
-        {
+        // Cache makes the no-change path free (model only loads for dirty notes).
+        // Cap stored warnings so repeated refreshes can't grow them unbounded.
+        let semantic_extra =
+            load_semantic_extras(config, &self.storage, notes, &mut self.config_errors);
+        self.config_errors.truncate(10);
+        if let Ok(graph_state) = GraphState::from_specs(
+            &note_specs(notes, &config.features, &semantic_extra),
+            &settings,
+        ) {
             let state = Arc::new(RwLock::new(graph_state));
             let graph_kill_tx = graf::start_physics(state.clone(), &settings);
             self.graph_state = Some(state);
@@ -460,7 +511,11 @@ impl GrafPlugin {
     }
 
     fn build_preview_key(&self) -> Option<PreviewRequestKey> {
-        let note_id = if let Some(gs) = &self.graph_state {
+        // Hover wins over keyboard selection: moving the mouse shows the
+        // hovered note instantly, moving away falls back to the selection.
+        let note_id = if let Some(hover) = &self.hover_note_id {
+            Some(hover.clone())
+        } else if let Some(gs) = &self.graph_state {
             let guard = gs.read();
             if let Some(idx) = guard.selection.primary {
                 guard
@@ -673,6 +728,7 @@ enum EventAction {
     OpenFile(String),
     OpenHelp,
     NoteModified(String),
+    ToggleSemantic,
 }
 
 /// Graph area inside the view: below the title bar, minus the preview pane.
@@ -847,6 +903,97 @@ fn refresh_note_summaries(storage: &Storage) -> Vec<crate::storage::NoteSummary>
         .collect()
 }
 
+/// Recompute the hovered node with the exact picking the renderer uses
+/// (`canvas_area` → `screen_to_world` → `hit_test`), so the hover ring,
+/// preview, and status title agree on the same node. Skipped while dragging,
+/// panning, or when a popup/menu owns the mouse.
+fn update_hover(
+    state: &mut GrafPlugin,
+    config: &ClinConfig,
+    term_area: ratatui::layout::Rect,
+    col: u16,
+    row: u16,
+) {
+    let clear = |state: &mut GrafPlugin| {
+        state.hover_note_id = None;
+    };
+    if state.search_popup.is_some() {
+        clear(state);
+        return;
+    }
+    let Some(gs) = state.graph_state.as_ref() else {
+        clear(state);
+        return;
+    };
+    {
+        let guard = gs.read();
+        if guard.context_menu.is_some() || guard.dragging_node.is_some() {
+            drop(guard);
+            clear(state);
+            return;
+        }
+    }
+    if state.graph_mouse_state.drag_origin.is_some()
+        || state.graph_mouse_state.is_panning
+        || state.graph_mouse_state.is_minimap_dragging
+        || state.graph_mouse_state.middle_drag_origin.is_some()
+        || state.graph_mouse_state.is_middle_panning
+    {
+        clear(state);
+        return;
+    }
+    let canvas = graf::canvas_area(graph_area(state, config, term_area), state.show_status_bar);
+    if col < canvas.x
+        || col >= canvas.x.saturating_add(canvas.width)
+        || row < canvas.y
+        || row >= canvas.y.saturating_add(canvas.height)
+    {
+        clear(state);
+        return;
+    }
+    let id = {
+        let guard = gs.read();
+        let (wx, wy) = guard.viewport.screen_to_world(col, row, canvas);
+        let max_links = guard.render_cache.lock().max_link_count;
+        let settings = state.settings_for(config);
+        guard
+            .viewport
+            .hit_test(wx, wy, &guard, &settings, canvas, max_links)
+            .and_then(|idx| {
+                guard
+                    .simulation
+                    .get_graph()
+                    .node_weight(idx)
+                    .map(|n| n.data.id.clone())
+            })
+    };
+    state.hover_note_id = id;
+}
+
+/// Remove one edge from the live simulation without rebuilding it
+/// (positions/viewport/physics preserved). Used for session-hiding
+/// semantic-only edges; explicit deletes go through the file first.
+fn remove_live_edge(state: &GrafPlugin, source_id: &str, target_title: &str) {
+    let Some(gs) = state.graph_state.as_ref() else {
+        return;
+    };
+    let (src_idx, tgt_idx) = {
+        let g = gs.read();
+        let graph = g.simulation.get_graph();
+        let src = graph
+            .node_indices()
+            .find(|i| graph[*i].data.id == source_id);
+        let tgt = graph
+            .node_indices()
+            .find(|i| graph[*i].data.title.eq_ignore_ascii_case(target_title));
+        (src, tgt)
+    };
+    if let (Some(s), Some(t)) = (src_idx, tgt_idx) {
+        let mut g = gs.write();
+        graf::apply_connection_change(&mut g.simulation, s, t, false);
+    }
+}
+
 /// Persist a wikilink edit and apply the resulting edge change to the live
 /// simulation without rebuilding it (positions/viewport/physics preserved).
 fn apply_connection(
@@ -889,6 +1036,20 @@ fn apply_connection(
             &resolved_target_title,
         )
     } else {
+        // Semantic-only edge (no explicit [[link]] on either side): hide it
+        // for this session without touching the file. A refresh restores it;
+        // raise `threshold` / lower `top_k` to quiet noisy vaults, or add a
+        // real [[link]] to pin the relation.
+        let is_explicit = state.notes.iter().any(|n| {
+            n.id == resolved_source_id
+                && n.links
+                    .iter()
+                    .any(|l| l.eq_ignore_ascii_case(&resolved_target_title))
+        });
+        if !is_explicit {
+            remove_live_edge(state, &resolved_source_id, &resolved_target_title);
+            return Some(resolved_source_id);
+        }
         remove_wikilink_from_note(
             &mut state.storage,
             &resolved_source_id,
@@ -1034,6 +1195,7 @@ enum ResolvedKey {
     ToggleLegend,
     ToggleGrid,
     ToggleStatus,
+    ToggleSemantic,
     ToggleLookingGlass,
     Refresh,
     TogglePreview,
@@ -1146,6 +1308,7 @@ fn resolve_graph_key(
                 GraphAction::ToggleLegend => Some(ResolvedKey::ToggleLegend),
                 GraphAction::ToggleGrid => Some(ResolvedKey::ToggleGrid),
                 GraphAction::ToggleStatus => Some(ResolvedKey::ToggleStatus),
+                GraphAction::ToggleSemantic => Some(ResolvedKey::ToggleSemantic),
                 GraphAction::Refresh => Some(ResolvedKey::Refresh),
                 GraphAction::TogglePreview => Some(ResolvedKey::TogglePreview),
                 GraphAction::LookingGlass => Some(ResolvedKey::ToggleLookingGlass),
@@ -1196,6 +1359,9 @@ fn handle_event(
 ) -> anyhow::Result<Option<EventAction>> {
     match ev {
         crossterm::event::Event::Key(key) => {
+            // Keyboard takes over from the mouse: drop hover so the preview
+            // follows the keyboard selection again.
+            app_state.hover_note_id = None;
             if app_state.search_popup.is_some() {
                 app_state.seq_matcher.clear();
                 handle_search_keys(app_state, key, config, keybinds);
@@ -1257,6 +1423,7 @@ fn handle_event(
                     app_state.show_status_bar = !app_state.show_status_bar;
                     None
                 }
+                ResolvedKey::ToggleSemantic => Some(EventAction::ToggleSemantic),
                 ResolvedKey::ToggleLookingGlass => {
                     app_state.show_looking_glass = !app_state.show_looking_glass;
                     None
@@ -1307,6 +1474,17 @@ fn handle_event(
             app_state.mouse_pos = Some((mouse_event.column, mouse_event.row));
             if let Some(graph_state) = &app_state.graph_state {
                 graph_state.write().mouse_pos = Some((mouse_event.column, mouse_event.row));
+            }
+            // Pure mouse motion (no buttons): refresh hover so the name,
+            // ring, and preview follow the cursor with no click or drag.
+            if matches!(mouse_event.kind, crossterm::event::MouseEventKind::Moved) {
+                update_hover(
+                    app_state,
+                    config,
+                    term_area,
+                    mouse_event.column,
+                    mouse_event.row,
+                );
             }
             if let Some(popup) = &mut app_state.search_popup {
                 let max_visible = config.graf.search.max_visible;
@@ -1503,6 +1681,18 @@ impl crate::overlay::OverlayView for GrafPlugin {
                 EventAction::NoteModified(id) => {
                     return Ok(crate::overlay::OverlayResult::NoteModified(id));
                 }
+                EventAction::ToggleSemantic => {
+                    _app.config.graf.semantic.enabled = !_app.config.graf.semantic.enabled;
+                    let on = _app.config.graf.semantic.enabled;
+                    self.refresh_simulation(&_app.config);
+                    // Persisted with the rest of config on graph exit.
+                    _app.set_temporary_status(if on {
+                        "Semantic overlay on"
+                    } else {
+                        "Semantic overlay off"
+                    });
+                    return Ok(crate::overlay::OverlayResult::Continue);
+                }
             }
         }
         Ok(crate::overlay::OverlayResult::Continue)
@@ -1567,7 +1757,62 @@ fn draw_ui(
             show_status_bar: state.show_status_bar,
         };
         draw_graph_view(frame, graph_area, &guard, &settings, &graf_theme, &flags);
+        // Hovered-node label drawn clin-side (upstream only labels selections):
+        // the name floats above the node like a selected label, no click needed.
+        if let Some(hover_id) = &state.hover_note_id
+            && let Some(node) = guard
+                .simulation
+                .get_graph()
+                .node_indices()
+                .filter_map(|i| {
+                    let n = &guard.simulation.get_graph()[i];
+                    (n.data.id == *hover_id).then(|| (n.location, n.data.title.clone()))
+                })
+                .next()
+        {
+            let canvas = graf::canvas_area(graph_area, state.show_status_bar);
+            let (sx, sy) = guard
+                .viewport
+                .world_to_screen(node.0.x as f64, node.0.y as f64, canvas);
+            let max_len = settings.visual.label_max_length.max(1);
+            let mut title = node.1.clone();
+            if title.chars().count() > max_len {
+                title = title.chars().take(max_len).collect();
+            }
+            let width = unicode_width::UnicodeWidthStr::width(title.as_str()) as u16;
+            if width > 0 {
+                let x = (sx as u16).saturating_sub(width / 2).clamp(
+                    canvas.x,
+                    canvas
+                        .x
+                        .saturating_add(canvas.width)
+                        .saturating_sub(width)
+                        .max(canvas.x),
+                );
+                let y = (sy as u16).saturating_sub(2).clamp(
+                    canvas.y,
+                    canvas
+                        .y
+                        .saturating_add(canvas.height)
+                        .saturating_sub(1)
+                        .max(canvas.y),
+                );
+                let label_area = Rect::new(x, y, width.min(canvas.width), 1);
+                let label = ratatui::text::Span::styled(
+                    title,
+                    ratatui::style::Style::default()
+                        .fg(graf_theme.label_color)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                );
+                frame.render_widget(ratatui::widgets::Paragraph::new(label), label_area);
+            }
+        }
         if state.show_status_bar {
+            let hover_title: Option<&str> = state
+                .hover_note_id
+                .as_ref()
+                .and_then(|id| state.notes.iter().find(|n| &n.id == id))
+                .map(|n| n.title.as_str());
             draw_status_bar(
                 frame,
                 area,
@@ -1577,6 +1822,7 @@ fn draw_ui(
                 &state.keybinds,
                 state.seq_matcher.pending_display().as_deref(),
                 state.grid,
+                hover_title,
             );
         }
     }
@@ -1629,6 +1875,7 @@ fn draw_status_bar(
     keybinds: &Keybinds,
     pending: Option<&str>,
     grid_visible: bool,
+    hover_title: Option<&str>,
 ) {
     use ratatui::style::Style;
 
@@ -1681,6 +1928,17 @@ fn draw_status_bar(
 
     let (left_line, right_line) =
         crate::statusline::render_footer(&ctx, &config.statusline, ViewMode::Graph, app_theme);
+    let mut left_line = left_line;
+    // Hovered note name: the preview pane shows its content, the status bar
+    // names it — no click or drag needed to identify a node.
+    if let Some(title) = hover_title {
+        left_line.spans.push(Span::styled(
+            format!("  ◉ {title}"),
+            Style::default()
+                .fg(app_theme.highlight_fg)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ));
+    }
     crate::ui::draw_status_bar(frame, status_area, app_theme, left_line, right_line);
 }
 
@@ -1830,5 +2088,98 @@ fn map_selection_focus(m: &crate::config::SelectionFocus) -> graf::settings::Sel
         crate::config::SelectionFocus::Grow => graf::settings::SelectionFocus::Grow,
         crate::config::SelectionFocus::Dim => graf::settings::SelectionFocus::Dim,
         crate::config::SelectionFocus::GrowDim => graf::settings::SelectionFocus::GrowDim,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_storage(dir: &std::path::Path) -> Storage {
+        Storage {
+            data_dir: dir.to_path_buf(),
+            config_dir: dir.to_path_buf(),
+            notes_dir: dir.to_path_buf(),
+            templates_dir: dir.to_path_buf(),
+            key: core::array::from_fn(|_| 1),
+            skip_dir_patterns: vec![],
+            rename_on_title_change: true,
+        }
+    }
+
+    /// Drives the real hover path headlessly: node world position →
+    /// screen cell → `update_hover` → `build_preview_key`. Catches wiring
+    /// bugs (wrong rect, cleared state) that pure picking math would miss.
+    #[test]
+    fn hover_picks_node_and_preview_key_prefers_it() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let mut storage = test_storage(tmp.path());
+        // Linked pair so both survive `show_orphan = false`.
+        let a_id = storage
+            .save_note(
+                "a.md",
+                &crate::storage::Note {
+                    title: "Alpha".to_string(),
+                    content: "alpha body, see [[Beta]]".to_string(),
+                    updated_at: 1,
+                    tags: vec![],
+                },
+            )
+            .expect("save a");
+        let _b_id = storage
+            .save_note(
+                "b.md",
+                &crate::storage::Note {
+                    title: "Beta".to_string(),
+                    content: "beta body".to_string(),
+                    updated_at: 1,
+                    tags: vec![],
+                },
+            )
+            .expect("save b");
+        let summaries = vec![
+            storage.load_note_summary(&a_id).expect("summary a"),
+            storage
+                .load_note_summary(
+                    &storage
+                        .list_note_ids(false, false)
+                        .expect("ids")
+                        .into_iter()
+                        .find(|id| *id != a_id)
+                        .expect("b id"),
+                )
+                .expect("summary b"),
+        ];
+        let config = ClinConfig::default();
+        let mut plugin = GrafPlugin::new(
+            &config,
+            storage,
+            summaries,
+            Vec::new(),
+            Keybinds::default(),
+            crate::keybinds::KeyMatcher::default(),
+        )
+        .expect("plugin");
+
+        let term = ratatui::layout::Rect::new(0, 0, 120, 40);
+        let canvas = graf::canvas_area(graph_area(&plugin, &config, term), plugin.show_status_bar);
+        let (col, row) = {
+            let gs = plugin.graph_state.as_ref().expect("graph");
+            let guard = gs.read();
+            let graph = guard.simulation.get_graph();
+            let idx = graph
+                .node_indices()
+                .find(|i| graph[*i].data.id == a_id)
+                .expect("alpha node");
+            let loc = graph[idx].location;
+            let (sx, sy) = guard
+                .viewport
+                .world_to_screen(loc.x as f64, loc.y as f64, canvas);
+            (sx as u16, sy as u16)
+        };
+        update_hover(&mut plugin, &config, term, col, row);
+        assert_eq!(plugin.hover_note_id.as_deref(), Some(a_id.as_str()));
+        let key = plugin.build_preview_key().expect("preview key");
+        assert_eq!(key.note_id, a_id);
     }
 }
