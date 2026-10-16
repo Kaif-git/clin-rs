@@ -231,31 +231,13 @@ pub fn note_specs(
         .collect()
 }
 
-/// Load semantic-similarity extras (`id -> [titles]`), never failing the graph.
-/// On model/cache error the overlay is skipped and the reason is recorded.
-fn load_semantic_extras(
-    config: &ClinConfig,
-    storage: &Storage,
-    summaries: &[crate::storage::NoteSummary],
-    config_errors: &mut Vec<String>,
-) -> std::collections::HashMap<String, Vec<String>> {
-    if !config.graf.semantic.enabled {
-        return std::collections::HashMap::new();
-    }
-    match crate::semantic::compute_semantic_extras(
-        summaries,
-        storage,
-        &config.features,
-        &config.graf.semantic,
-        &storage.data_dir,
-    ) {
-        Ok(extra) => extra,
-        Err(e) => {
-            config_errors.push(format!("Semantic graph overlay off: {e:#}"));
-            std::collections::HashMap::new()
-        }
-    }
-}
+/// Result of a background semantic-embedding job: `(generation, outcome)`.
+/// Stale generations (a newer job was started, or the overlay was toggled)
+/// are discarded on arrival.
+type SemanticJobResult = (
+    u64,
+    Result<std::collections::HashMap<String, Vec<String>>, String>,
+);
 
 // ── Plugin state ────────────────────────────────────────────────────────────
 
@@ -314,6 +296,14 @@ pub struct GrafPlugin {
     pub show_status_bar: bool,
     pub show_looking_glass: bool,
     pub config_reload_msg: Option<String>,
+    /// Background semantic-embedding job (model download + full-vault embed
+    /// run off the UI thread). Merged live by [`Self::poll_semantic_job`].
+    pub semantic_job: Option<std::sync::mpsc::Receiver<SemanticJobResult>>,
+    semantic_job_gen: u64,
+    /// `(source id, target title)` pairs inserted live from a finished job;
+    /// removed live again when the overlay is toggled off or the graph
+    /// is rebuilt.
+    applied_semantic: Vec<(String, String)>,
 
     pub preview_enabled: bool,
     pub preview_content: Option<PreviewContent>,
@@ -347,12 +337,14 @@ impl GrafPlugin {
         config: &ClinConfig,
         storage: Storage,
         summaries: Vec<crate::storage::NoteSummary>,
-        mut config_errors: Vec<String>,
+        config_errors: Vec<String>,
         keybinds: Keybinds,
         seq_matcher: crate::keybinds::KeyMatcher,
     ) -> anyhow::Result<Self> {
         let settings = clin_settings(config);
-        let semantic_extra = load_semantic_extras(config, &storage, &summaries, &mut config_errors);
+        // Build the explicit-link graph immediately so the view opens fast;
+        // similarity edges arrive live from a background job (see below).
+        let semantic_extra = std::collections::HashMap::new();
         let graph_state = GraphState::from_specs(
             &note_specs(&summaries, &config.features, &semantic_extra),
             &settings,
@@ -360,7 +352,7 @@ impl GrafPlugin {
         let state = Arc::new(RwLock::new(graph_state));
         let graph_kill_tx = graf::start_physics(state.clone(), &settings);
 
-        Ok(Self {
+        let mut plugin = Self {
             graph_state: Some(state),
             graph_kill_tx,
             graph_mouse_state: graf::GraphMouseState::default(),
@@ -394,7 +386,15 @@ impl GrafPlugin {
             mouse_pos: None,
             hover_note_id: None,
             canvas_fps_sampler: CanvasFpsSampler::default(),
-        })
+            semantic_job: None,
+            semantic_job_gen: 0,
+            applied_semantic: Vec::new(),
+        };
+        if config.graf.semantic.enabled {
+            let notes = plugin.notes.clone();
+            plugin.spawn_semantic_job(config, &notes);
+        }
+        Ok(plugin)
     }
 
     pub fn canvas_fps(&self) -> Option<f64> {
@@ -446,11 +446,11 @@ impl GrafPlugin {
             }
             None => &self.notes,
         };
-        // Cache makes the no-change path free (model only loads for dirty notes).
-        // Cap stored warnings so repeated refreshes can't grow them unbounded.
-        let semantic_extra =
-            load_semantic_extras(config, &self.storage, notes, &mut self.config_errors);
-        self.config_errors.truncate(10);
+        // Rebuild with explicit links only (fast); similarity edges arrive
+        // live from a background job. The old simulation — and any edges
+        // applied to it — is gone, so drop them from tracking.
+        self.applied_semantic.clear();
+        let semantic_extra = std::collections::HashMap::new();
         if let Ok(graph_state) = GraphState::from_specs(
             &note_specs(notes, &config.features, &semantic_extra),
             &settings,
@@ -460,6 +460,150 @@ impl GrafPlugin {
             self.graph_state = Some(state);
             self.graph_kill_tx = graph_kill_tx;
         }
+        // (Re)spawn after the rebuild borrows end; the new generation
+        // invalidates any job still running from before the refresh.
+        if self.graph_state.is_some() {
+            let snapshot = self.focus_filtered_notes();
+            self.spawn_semantic_job(config, &snapshot);
+        } else {
+            self.semantic_job_gen += 1;
+            self.semantic_job = None;
+        }
+    }
+
+    /// Notes currently displayed (focus subset, or everything).
+    pub(crate) fn focus_filtered_notes(&self) -> Vec<crate::storage::NoteSummary> {
+        match &self.focus_note_ids {
+            Some(ids) => self
+                .notes
+                .iter()
+                .filter(|n| ids.contains(&n.id))
+                .cloned()
+                .collect(),
+            None => self.notes.clone(),
+        }
+    }
+
+    /// Start a background semantic-embedding job for `notes` and return
+    /// immediately. The model download (~80MB first run) and the full-vault
+    /// embed both happen off the UI thread; [`Self::poll_semantic_job`]
+    /// merges the result live when it arrives. Starting a new job retires
+    /// any previous one (its late result is discarded by generation).
+    pub fn spawn_semantic_job(
+        &mut self,
+        config: &ClinConfig,
+        notes: &[crate::storage::NoteSummary],
+    ) {
+        self.semantic_job_gen += 1;
+        let job_gen = self.semantic_job_gen;
+        if !config.graf.semantic.enabled {
+            self.semantic_job = None;
+            return;
+        }
+        let storage = self.storage.clone();
+        let summaries = notes.to_vec();
+        let features = config.features.clone();
+        let semantic = config.graf.semantic.clone();
+        let data_dir = storage.data_dir.clone();
+        let (tx, rx) = std::sync::mpsc::channel::<SemanticJobResult>();
+        match std::thread::Builder::new()
+            .name("semantic-embed".to_string())
+            .spawn(move || {
+                let out = crate::semantic::compute_semantic_extras(
+                    &summaries, &storage, &features, &semantic, &data_dir,
+                )
+                .map_err(|e| format!("{e:#}"));
+                let _ = tx.send((job_gen, out));
+            }) {
+            Ok(_) => self.semantic_job = Some(rx),
+            Err(_) => self.semantic_job = None,
+        }
+    }
+
+    /// Merge a finished background job into the live simulation without
+    /// rebuilding it (positions/viewport/physics preserved). Call once per
+    /// frame; no-op until a job completes. Stale results (newer job started,
+    /// overlay toggled off, notes changed since) are discarded.
+    pub fn poll_semantic_job(&mut self, config: &ClinConfig, app: &mut crate::app::App) {
+        let (job_gen, out) = match &self.semantic_job {
+            Some(rx) => match rx.try_recv() {
+                Ok(result) => result,
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.semantic_job = None;
+                    self.config_errors
+                        .push("Semantic overlay off: embedding job ended.".into());
+                    self.config_errors.truncate(10);
+                    return;
+                }
+            },
+            None => return,
+        };
+        self.semantic_job = None;
+        if job_gen != self.semantic_job_gen || !config.graf.semantic.enabled {
+            return;
+        }
+        match out {
+            Err(e) => {
+                // Cap stored warnings so repeated failures can't grow them unbounded.
+                self.config_errors
+                    .push(format!("Semantic graph overlay off: {e}"));
+                self.config_errors.truncate(10);
+                app.set_temporary_status("Semantic overlay failed — see graph warnings");
+            }
+            Ok(extra) => {
+                let count: usize = extra.values().map(Vec::len).sum();
+                self.apply_semantic_extras(&extra);
+                app.set_temporary_status(&format!(
+                    "Semantic overlay ready — {count} related links"
+                ));
+            }
+        }
+    }
+
+    /// Insert similarity edges into the live simulation (no rebuild).
+    /// Mirrors the build-time merge in [`note_specs`]; only pairs absent
+    /// from both the files and [`Self::applied_semantic`] are added.
+    fn apply_semantic_extras(&mut self, extra: &std::collections::HashMap<String, Vec<String>>) {
+        let Some(gs) = self.graph_state.as_ref() else {
+            return;
+        };
+        let mut pairs: Vec<(NodeIndex, NodeIndex, String, String)> = Vec::new();
+        {
+            let g = gs.read();
+            let graph = g.simulation.get_graph();
+            for (id, titles) in extra {
+                let Some(src) = graph.node_indices().find(|i| graph[*i].data.id == *id) else {
+                    continue;
+                };
+                for title in titles {
+                    if self
+                        .applied_semantic
+                        .iter()
+                        .any(|(a, b)| a == id && b == title)
+                    {
+                        continue;
+                    }
+                    if let Some(tgt) = graph
+                        .node_indices()
+                        .find(|i| graph[*i].data.title.eq_ignore_ascii_case(title))
+                    {
+                        pairs.push((src, tgt, id.clone(), title.clone()));
+                    }
+                }
+            }
+        }
+        if pairs.is_empty() {
+            return;
+        }
+        {
+            let mut g = gs.write();
+            for (src, tgt, _, _) in &pairs {
+                graf::apply_connection_change(&mut g.simulation, *src, *tgt, true);
+            }
+        }
+        self.applied_semantic
+            .extend(pairs.into_iter().map(|(_, _, id, title)| (id, title)));
     }
 
     /// Enter a focus mode (local graph or group): rebuild the simulation with
@@ -1652,6 +1796,8 @@ use ratatui::text::Span;
 impl crate::overlay::OverlayView for GrafPlugin {
     fn overlay_render(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
         let config = app.config.clone();
+        // Merge a finished background embedding job (no-op until one lands).
+        self.poll_semantic_job(&config, app);
         draw_ui(frame, self, &config, &app.app_theme, area);
     }
 
@@ -1682,15 +1828,32 @@ impl crate::overlay::OverlayView for GrafPlugin {
                     return Ok(crate::overlay::OverlayResult::NoteModified(id));
                 }
                 EventAction::ToggleSemantic => {
-                    _app.config.graf.semantic.enabled = !_app.config.graf.semantic.enabled;
-                    let on = _app.config.graf.semantic.enabled;
-                    self.refresh_simulation(&_app.config);
-                    // Persisted with the rest of config on graph exit.
-                    _app.set_temporary_status(if on {
-                        "Semantic overlay on"
+                    if _app.config.graf.semantic.enabled {
+                        // Toggle off: retire any pending job and remove the
+                        // applied similarity edges live — no rebuild, no file
+                        // writes. This is the recovery path: the vault's link
+                        // structure is never touched by the overlay.
+                        _app.config.graf.semantic.enabled = false;
+                        self.semantic_job_gen += 1;
+                        self.semantic_job = None;
+                        for (id, title) in std::mem::take(&mut self.applied_semantic) {
+                            remove_live_edge(self, &id, &title);
+                        }
+                        _app.set_temporary_status("Semantic overlay off");
+                    } else if crate::semantic::has_warm_cache(&self.storage.data_dir) {
+                        _app.config.graf.semantic.enabled = true;
+                        let notes = self.focus_filtered_notes();
+                        let cfg = _app.config.clone();
+                        self.spawn_semantic_job(&cfg, &notes);
+                        _app.set_temporary_status("Semantic overlay on — embedding in background…");
                     } else {
-                        "Semantic overlay off"
-                    });
+                        // Cold first run for this vault: model download
+                        // (~80MB) plus a full-vault embed. Confirm
+                        // explicitly — an accidental keypress must not kick
+                        // off minutes of background work.
+                        _app.show_confirm(crate::popups::ConfirmAction::EnableSemanticOverlay);
+                    }
+                    // Persisted with the rest of config on graph exit.
                     return Ok(crate::overlay::OverlayResult::Continue);
                 }
             }

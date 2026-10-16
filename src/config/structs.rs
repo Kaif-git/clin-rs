@@ -527,8 +527,9 @@ impl Default for GrafConfig {
 /// Semantic-similarity overlay for the graph view (all-MiniLM-L6-v2, ONNX).
 ///
 /// Disabled by default: the first enable downloads the model (~80MB) and
-/// embeds the vault on graph open. Vectors are cached per vault under
-/// `.clin/semantic_cache.json` and only dirty notes are re-embedded.
+/// embeds the vault on graph open. Vectors are cached per vault in the
+/// platform cache dir (`<cache>/vaults/<hex>/semantic_cache.json`) and only
+/// dirty notes are re-embedded.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct SemanticConfig {

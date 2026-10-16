@@ -41,6 +41,10 @@ pub enum ConfirmAction {
         new_title: String,
         note_ids: Vec<String>,
     },
+    /// First enable of the graph semantic overlay for a vault (cold cache):
+    /// model download plus a full-vault background embed. Session-only —
+    /// nothing is written to notes; toggling off removes the edges again.
+    EnableSemanticOverlay,
 }
 
 pub struct ConfirmPopup {

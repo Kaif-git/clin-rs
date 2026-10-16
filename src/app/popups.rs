@@ -456,6 +456,15 @@ template = """
                 "Update".into(),
                 false,
             ),
+            ConfirmAction::EnableSemanticOverlay => (
+                "Enable the semantic overlay?".into(),
+                Some(
+                    "First run downloads the embedding model (~80MB) and embeds this vault in the background. Edges are session-only — nothing is written to your notes. Toggle off anytime with Shift+E to remove them."
+                        .into(),
+                ),
+                "Enable".into(),
+                false,
+            ),
         };
 
         self.popups.confirm = Some(ConfirmPopup {
@@ -516,6 +525,24 @@ template = """
                     note_ids,
                 } => {
                     self.confirm_update_backlinks(old_title, old_id, new_title, note_ids);
+                }
+                ConfirmAction::EnableSemanticOverlay => {
+                    self.config.graf.semantic.enabled = true;
+                    if let Ok(mut disk) = crate::config::ClinConfig::load().0 {
+                        disk.graf.semantic.enabled = true;
+                        if let Err(e) = disk.save() {
+                            self.set_temporary_status(&format!("Failed to save config: {e}"));
+                        }
+                    }
+                    let cfg = self.config.clone();
+                    if let Some(plugin) = self.graph_plugin.as_mut() {
+                        let notes = plugin.focus_filtered_notes();
+                        plugin.spawn_semantic_job(&cfg, &notes);
+                        self.set_temporary_status("Semantic overlay on — embedding in background…");
+                    } else {
+                        // Takes effect on next graph open.
+                        self.set_temporary_status_static("Semantic overlay enabled");
+                    }
                 }
             }
         }

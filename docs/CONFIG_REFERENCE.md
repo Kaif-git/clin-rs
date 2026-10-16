@@ -441,9 +441,12 @@ similarity edges between related-but-unlinked notes, so the graph clusters by
 topic without requiring `[[wikilinks]]` everywhere. The same vectors also power
 the **Related** section of note search (`≈ related 0.72` rows for notes with no
 shared keywords). Disabled by default: the first enable downloads the model
-(~80MB) and embeds the vault on graph open (search warms the same cache in the
-background).
-Vectors are cached per vault (`.clin/semantic_cache.json`); only changed notes
+(~80MB) and embeds the vault in a background thread on graph open (search warms
+the same cache in the background). Enabling with a cold cache asks for
+confirmation; edges are session-only (nothing is written to notes) and toggling
+off removes them live again.
+Vectors are cached per vault in the platform cache dir
+(`<cache>/vaults/<hex>/semantic_cache.json`); only changed notes
 are re-embedded. Semantic edges render like normal edges; deleting one hides it
 for the session only (a refresh restores it — add a real `[[link]]` to pin it).
 
@@ -672,8 +675,8 @@ These global handlers take precedence over per-view bindings.
 | `toggle_file_tree` | `Ctrl+e` | Toggle file-tree sidebar |
 | `new_tab` | `Ctrl+n` | Open new note tab |
 | `close_tab` | `Ctrl+w` | Close current tab |
-| `next_tab` | `Ctrl+Tab` | Next tab |
-| `prev_tab` | `Ctrl+Shift+Tab` | Previous tab |
+| `next_tab` | `Alt+Right` | Next tab |
+| `prev_tab` | `Alt+Left` | Previous tab |
 | `preview_link` | `Alt+l` | Preview linked note under cursor |
 
 ### Help Actions (`[help]`)

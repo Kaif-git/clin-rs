@@ -6,7 +6,8 @@
 //! without any `[[wikilink]]`.
 //!
 //! Lifecycle (MVP): runs **only on graph open / refresh**, never while
-//! typing. Vectors are cached per vault at `.clin/semantic_cache.json`
+//! typing. Vectors are cached per vault in the platform cache dir
+//! (`<cache>/vaults/<hex>/semantic_cache.json`, see [`resolved_cache_path`])
 //! keyed by content hash, so only dirty notes are re-embedded.
 
 use std::collections::{HashMap, HashSet};
@@ -137,12 +138,45 @@ pub fn top_k_pairs(
 }
 
 pub fn cache_path(data_dir: &Path) -> PathBuf {
-    data_dir.join(".clin").join("semantic_cache.json")
+    // Legacy vault-local location. Absolutized so a relative vault dir can
+    // never resolve against the launch directory (CWD).
+    let absolute = if data_dir.is_absolute() {
+        data_dir.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(data_dir)
+    };
+    absolute.join(".clin").join("semantic_cache.json")
 }
 
-fn load_cache(data_dir: &Path) -> CacheFile {
-    let path = cache_path(data_dir);
-    let bytes = match std::fs::read(&path) {
+/// Central cache-file path for a vault: `<cache>/vaults/<hex>/semantic_cache.json`.
+///
+/// Vault-scoped by canonical identity (stable across CWDs and symlinks), so
+/// embedding state lives in the platform cache dir — never in the vault and
+/// never in whatever directory clin was launched from. Falls back to the
+/// legacy vault-local [`cache_path`] when identity/discovery fails.
+pub fn resolved_cache_path(vault_dir: &Path) -> PathBuf {
+    (|| -> Option<PathBuf> {
+        let vault_id = crate::local_state::vault_identity_path(vault_dir).ok()?;
+        let digest = crate::paths::vault_cache_digest(&vault_id);
+        let app_paths = crate::paths::AppPaths::discover(
+            crate::config::ClinConfig::config_path().unwrap_or_default(),
+        )
+        .ok()?;
+        Some(app_paths.scoped_semantic_cache_path(digest))
+    })()
+    .unwrap_or_else(|| cache_path(vault_dir))
+}
+
+/// True when a central embedding cache already exists for this vault.
+/// The enable-confirm dialog is only shown on a cold first run.
+pub fn has_warm_cache(vault_dir: &Path) -> bool {
+    resolved_cache_path(vault_dir).exists()
+}
+
+fn load_cache_file(path: &Path) -> CacheFile {
+    let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(_) => return CacheFile::default(),
     };
@@ -156,8 +190,7 @@ fn load_cache(data_dir: &Path) -> CacheFile {
     file
 }
 
-fn save_cache(data_dir: &Path, file: &CacheFile) {
-    let path = cache_path(data_dir);
+fn save_cache_file(path: &Path, file: &CacheFile) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -221,7 +254,8 @@ fn ensure_embeddings_in(
     texts: &[(String, String)],
     data_dir: &Path,
 ) -> Result<HashMap<String, Vec<f32>>> {
-    let mut file = load_cache(data_dir);
+    let cache_file = resolved_cache_path(data_dir);
+    let mut file = load_cache_file(&cache_file);
     let mut vectors: HashMap<String, Vec<f32>> = HashMap::new();
     let mut dirty: Vec<(String, String)> = Vec::new();
     for (id, text) in texts {
@@ -257,7 +291,7 @@ fn ensure_embeddings_in(
     file.version = CACHE_VERSION;
     file.model = MODEL_ID.to_string();
     file.dims = CACHE_DIMS;
-    save_cache(data_dir, &file);
+    save_cache_file(&cache_file, &file);
     Ok(vectors)
 }
 
@@ -465,9 +499,18 @@ mod tests {
                 ),
             ]),
         };
-        save_cache(dir.path(), &file);
-        let loaded = load_cache(dir.path());
+        save_cache_file(&dir.path().join("semantic_cache.json"), &file);
+        let loaded = load_cache_file(&dir.path().join("semantic_cache.json"));
         assert_eq!(loaded.entries.len(), 2);
+    }
+
+    #[test]
+    fn cache_path_never_relative_to_launch_dir() {
+        // A relative vault dir must resolve to an absolute path so the cache
+        // can never land in whatever directory clin was launched from.
+        let rel = cache_path(Path::new("vault"));
+        assert!(rel.is_absolute());
+        assert!(rel.ends_with(Path::new(".clin").join("semantic_cache.json")));
     }
 
     #[test]

@@ -806,7 +806,21 @@ pub(crate) fn handle_edit_mouse(
                 }
                 for (i, rect) in app.editor.tab_bar_rects.clone().iter().enumerate() {
                     if contains_cell(*rect, mouse_event.column, mouse_event.row) {
-                        app.switch_editor_tab(i);
+                        if i == app.editor.active_tab {
+                            // The active tab carries the title: clicking it
+                            // focuses the title field (merged header).
+                            *focus = EditFocus::Title;
+                            move_textarea_cursor_to_mouse(
+                                &mut app.editor.title_editor,
+                                *rect,
+                                mouse_event.column,
+                                mouse_event.row,
+                                app.editor.title_viewport_row as usize,
+                                app.editor.title_viewport_col as usize,
+                            );
+                        } else {
+                            app.switch_editor_tab(i);
+                        }
                         return;
                     }
                 }

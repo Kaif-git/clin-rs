@@ -1087,15 +1087,30 @@ impl App {
     }
 
     pub fn toggle_semantic_overlay(&mut self) {
-        self.config.graf.semantic.enabled = !self.config.graf.semantic.enabled;
-        let val = self.config.graf.semantic.enabled;
-        // Takes effect on next graph open/refresh (Shift+E toggles it live).
-        self.flag_status_persist(
-            val,
-            "Semantic overlay enabled",
-            "Semantic overlay disabled",
-            |c, v| c.graf.semantic.enabled = v,
-        );
+        if self.config.graf.semantic.enabled {
+            self.config.graf.semantic.enabled = false;
+            // Takes effect on next graph open/refresh (Shift+E toggles it live).
+            self.flag_status_persist(
+                false,
+                "Semantic overlay enabled",
+                "Semantic overlay disabled",
+                |c, v| c.graf.semantic.enabled = v,
+            );
+            return;
+        }
+        if crate::semantic::has_warm_cache(&self.storage.data_dir) {
+            self.config.graf.semantic.enabled = true;
+            self.flag_status_persist(
+                true,
+                "Semantic overlay enabled",
+                "Semantic overlay disabled",
+                |c, v| c.graf.semantic.enabled = v,
+            );
+            return;
+        }
+        // Cold first run for this vault: model download plus a full-vault
+        // embed. Confirm explicitly instead of starting it by accident.
+        self.show_confirm(crate::popups::ConfirmAction::EnableSemanticOverlay);
     }
 }
 

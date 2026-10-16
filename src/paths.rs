@@ -154,6 +154,18 @@ impl AppPaths {
             .join("note_cache.bin")
     }
 
+    /// Path to the vault-scoped semantic embedding cache
+    /// (`<cache_dir>/vaults/<hex>/semantic_cache.json`).
+    ///
+    /// Central cache dir (never the vault, never the launch directory) so
+    /// embedding state can't pollute notes or depend on the CWD.
+    pub fn scoped_semantic_cache_path(&self, vault_digest: u64) -> PathBuf {
+        self.cache_dir
+            .join("vaults")
+            .join(format!("{vault_digest:016x}"))
+            .join("semantic_cache.json")
+    }
+
     /// Legacy key file in the effective config root (`<config_dir>/key.bin`).
     pub fn config_root_key_path(&self) -> PathBuf {
         self.config_dir.join("key.bin")

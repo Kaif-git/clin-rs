@@ -5,7 +5,6 @@ use super::{
     draw_view_title_bar, format_keybind_hints, get_preview_info,
 };
 use crate::app::{App, EditFocus, EditSidebar, ViewMode};
-use crate::events::get_title_text;
 use crate::keybinds::EditAction;
 use crate::outline::parse::NodeKind;
 use unicode_width::UnicodeWidthStr;
@@ -84,9 +83,10 @@ fn draw_link_completion(frame: &mut Frame, body_area: Rect, app: &mut App) {
         .max(title.width())
         .max("No matching notes".width());
     let width = ((widest as u16) + 6).clamp(20, body_area.width);
-    // Suggestion rows + hint row, framed.
+    // Suggestion rows only: a plain bordered overlay with no footer bar.
+    // Keybinds live in the help overlay (F1) and the editor hint bar.
     let rows = comp.matches.len().max(1) as u16;
-    let height = (rows + 3).min(body_area.height);
+    let height = (rows + 2).min(body_area.height);
     let popup = Rect::new(
         body_area.x,
         body_area.bottom().saturating_sub(height),
@@ -124,10 +124,6 @@ fn draw_link_completion(frame: &mut Frame, body_area: Rect, app: &mut App) {
             Style::default().fg(theme.muted),
         )));
     }
-    lines.push(Line::from(Span::styled(
-        "  ↑↓ move · Tab accept · Esc",
-        Style::default().fg(theme.muted),
-    )));
     let list_height = inner.height as usize;
     frame.render_widget(
         Paragraph::new(lines.into_iter().take(list_height).collect::<Vec<_>>()),
@@ -142,8 +138,7 @@ pub fn draw_edit_view(frame: &mut Frame, app: &mut App, focus: EditFocus) {
     let outer_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // header
-            Constraint::Length(1), // tab bar
+            Constraint::Length(1), // merged header + tab bar
             Constraint::Min(0),    // body
             Constraint::Length(1), // hint bar
         ])
@@ -176,6 +171,10 @@ pub fn draw_edit_view(frame: &mut Frame, app: &mut App, focus: EditFocus) {
         let blank = Paragraph::new("").style(app.app_theme.bg_style());
         frame.render_widget(blank, outer_chunks[0]);
         app.editor.header_title_rect = Rect::default();
+        app.editor.tab_bar_rect = Rect::default();
+        app.editor.tab_bar_rects.clear();
+        app.editor.tab_close_rects.clear();
+        app.editor.new_tab_rect = Rect::default();
     } else if has_status {
         draw_view_title_bar(
             frame,
@@ -187,156 +186,61 @@ pub fn draw_edit_view(frame: &mut Frame, app: &mut App, focus: EditFocus) {
             app.load_spinner_tick,
         );
         app.editor.header_title_rect = Rect::default();
+        app.editor.tab_bar_rect = Rect::default();
+        app.editor.tab_bar_rects.clear();
+        app.editor.tab_close_rects.clear();
+        app.editor.new_tab_rect = Rect::default();
     } else {
-        let left_width = left_line.width() as u16;
-        let right_width = right_line.as_ref().map(|r| r.width() as u16).unwrap_or(0);
-        let title_str = get_title_text(&app.editor.title_editor).into_owned();
-        use unicode_width::UnicodeWidthStr;
-        let center_width = if title_str.is_empty() {
-            13u16
-        } else {
-            title_str.width() as u16
-        };
-        let remaining = outer_chunks[0]
-            .width
-            .saturating_sub(left_width + center_width);
-        let actual_right = right_width.min(remaining);
-
-        let header_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(left_width),
-                Constraint::Min(0),
-                Constraint::Length(actual_right),
-            ])
-            .split(outer_chunks[0]);
-
-        let left_area = header_chunks[0];
-        let center_area = header_chunks[1];
-        let right_area = header_chunks[2];
-
+        // Merged header + tab bar in a single row:
+        // `[status-left][tabs · active tab carries the title][status-right]`.
         let theme = &app.app_theme;
-
-        let icon_span = match app.editor.autosave_status {
-            crate::editor::AutosaveStatus::Unsaved => Some(Span::styled(
-                " ⨯",
-                Style::default().fg(ratatui::style::Color::Red),
-            )),
-            crate::editor::AutosaveStatus::RecentlySaved => Some(Span::styled(
-                " ✓",
-                Style::default().fg(ratatui::style::Color::Green),
-            )),
-            crate::editor::AutosaveStatus::Saved => None,
-        };
-
-        if focus == EditFocus::Title {
-            // Render background/blank bar first
-            let background_bar = Paragraph::new("").style(theme.title_bar_bg_style());
-            frame.render_widget(background_bar, outer_chunks[0]);
-
-            // Render left and right bars on top of the background
-            let left_bar = Paragraph::new(left_line).style(theme.title_bar_bg_style());
-            frame.render_widget(left_bar, left_area);
-
-            if let Some(r_text) = right_line {
-                let is_powerline = theme.hint_bar_style.has_filled_cells();
-                if is_powerline {
-                    let r_bar = Paragraph::new(r_text)
-                        .style(theme.hint_line_bg_style())
-                        .alignment(Alignment::Left);
-                    frame.render_widget(r_bar, right_area);
-                } else {
-                    let r_bar = Paragraph::new(r_text)
-                        .style(theme.title_bar_bg_style())
-                        .alignment(Alignment::Right);
-                    frame.render_widget(r_bar, right_area);
-                }
-            }
-
-            // Render TextArea centered relative to the screen width, clamped to left/right bars
-            let text_width = title_str.len() as u16;
-            let display_width = text_width.min(outer_chunks[0].width);
-            let raw_x_offset = (outer_chunks[0].width.saturating_sub(display_width)) / 2;
-            let start_x = (outer_chunks[0].x + raw_x_offset).max(left_area.right());
-            let end_x = right_area.x;
-            let title_rect =
-                Rect::new(start_x, outer_chunks[0].y, end_x.saturating_sub(start_x), 1);
-
-            app.editor
-                .title_editor
-                .set_style(theme.title_bar_bg_style().fg(theme.heading));
-            app.editor.title_editor.set_block(
-                Block::default()
-                    .style(theme.title_bar_bg_style())
-                    .borders(Borders::NONE),
-            );
-            app.editor
-                .title_editor
-                .set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
-            app.editor
-                .title_editor
-                .set_cursor_line_style(Style::default());
-            frame.render_widget(&app.editor.title_editor, title_rect);
-
-            if let Some(icon) = icon_span.clone() {
-                let w = icon.width() as u16;
-                let icon_x = (start_x + display_width).min(end_x.saturating_sub(w));
-                let icon_rect = Rect::new(icon_x, outer_chunks[0].y, w, 1);
-                frame.render_widget(Paragraph::new(Line::from(vec![icon])), icon_rect);
-            }
-
-            {
-                let (r, c) = crate::ui::refresh_textarea_viewport(
-                    &app.editor.title_editor,
-                    app.editor.title_viewport_row,
-                    app.editor.title_viewport_col,
-                    title_rect,
-                    false,
-                );
-                app.editor.title_viewport_row = r;
-                app.editor.title_viewport_col = c;
-            }
-        } else {
-            // Render background + centered title Paragraph on outer_chunks[0]
-            let (span, style) = if title_str.is_empty() {
-                ("Untitled note", Style::default().fg(theme.muted))
+        frame.render_widget(
+            Block::default().style(theme.title_bar_bg_style()),
+            outer_chunks[0],
+        );
+        let left_width = (left_line.width() as u16).min(outer_chunks[0].width);
+        let right_width = right_line
+            .as_ref()
+            .map(|r| r.width() as u16)
+            .unwrap_or(0)
+            .min(outer_chunks[0].width.saturating_sub(left_width));
+        let left_area = Rect::new(outer_chunks[0].x, outer_chunks[0].y, left_width, 1);
+        let right_area = Rect::new(
+            outer_chunks[0].x + outer_chunks[0].width.saturating_sub(right_width),
+            outer_chunks[0].y,
+            right_width,
+            1,
+        );
+        let strip = Rect::new(
+            left_area.right(),
+            outer_chunks[0].y,
+            outer_chunks[0]
+                .width
+                .saturating_sub(left_width)
+                .saturating_sub(right_width),
+            1,
+        );
+        let left_bar = Paragraph::new(left_line).style(theme.title_bar_bg_style());
+        frame.render_widget(left_bar, left_area);
+        if let Some(r_text) = right_line {
+            let is_powerline = theme.hint_bar_style.has_filled_cells();
+            let r_bar = if is_powerline {
+                Paragraph::new(r_text)
+                    .style(theme.hint_line_bg_style())
+                    .alignment(Alignment::Left)
             } else {
-                (title_str.as_str(), Style::default().fg(theme.heading))
+                Paragraph::new(r_text)
+                    .style(theme.title_bar_bg_style())
+                    .alignment(Alignment::Right)
             };
-            let mut spans = vec![Span::styled(span, style)];
-            if let Some(icon) = icon_span {
-                spans.push(icon);
-            }
-            let center_paragraph = Paragraph::new(Line::from(spans))
-                .style(theme.title_bar_bg_style())
-                .alignment(Alignment::Center);
-            frame.render_widget(center_paragraph, outer_chunks[0]);
-
-            // Render left and right bars on top of the centered title
-            let left_bar = Paragraph::new(left_line).style(theme.title_bar_bg_style());
-            frame.render_widget(left_bar, left_area);
-
-            if let Some(r_text) = right_line {
-                let is_powerline = theme.hint_bar_style.has_filled_cells();
-                if is_powerline {
-                    let r_bar = Paragraph::new(r_text)
-                        .style(theme.hint_line_bg_style())
-                        .alignment(Alignment::Left);
-                    frame.render_widget(r_bar, right_area);
-                } else {
-                    let r_bar = Paragraph::new(r_text)
-                        .style(theme.title_bar_bg_style())
-                        .alignment(Alignment::Right);
-                    frame.render_widget(r_bar, right_area);
-                }
-            }
+            frame.render_widget(r_bar, right_area);
         }
-
-        app.editor.header_title_rect = center_area;
+        // `left_line`/`right_line` borrows end here; the tab strip below
+        // mutates the editor.
+        draw_tab_strip(frame, strip, &mut app.editor, &app.app_theme, focus);
     }
-    draw_tab_bar(frame, outer_chunks[1], app);
-    let body_area = outer_chunks[2];
-    let hint_area = outer_chunks[3];
+    let body_area = outer_chunks[1];
+    let hint_area = outer_chunks[2];
 
     // Focus (zen) mode hides the file sidebar so only the text remains.
     let file_tree_visible = app.editor.file_tree_visible && !app.zen_mode;
@@ -655,80 +559,130 @@ pub fn draw_edit_view(frame: &mut Frame, app: &mut App, focus: EditFocus) {
         }
     }
 }
-fn draw_tab_bar(frame: &mut Frame, area: Rect, app: &mut App) {
+/// Tab strip for the merged edit-view header: the selected tab shows the
+/// note title (live while editing) and the only save indicator, so the old
+/// separate title row and its duplicate `⨯`/`✓` are gone. While title focus
+/// is active the selected tab expands into the editable title field.
+/// Records tab rects for mouse hit-testing; the active-tab rect doubles as
+/// `header_title_rect` (title click-to-focus).
+fn draw_tab_strip(
+    frame: &mut Frame,
+    strip: Rect,
+    editor: &mut crate::editor::NoteEditor,
+    theme: &crate::app_theme::AppThemeColors,
+    focus: EditFocus,
+) {
     use crate::events::get_title_text;
-    // Focus (zen) mode hides the tab bar like the header and hint bar.
-    if app.zen_mode {
-        frame.render_widget(Paragraph::new("").style(app.app_theme.bg_style()), area);
-        app.editor.tab_bar_rect = Rect::default();
-        app.editor.tab_bar_rects.clear();
-        app.editor.tab_close_rects.clear();
-        app.editor.new_tab_rect = Rect::default();
-        return;
-    }
-    let theme = &app.app_theme;
-    frame.render_widget(Block::default().style(theme.title_bar_bg_style()), area);
-    app.editor.tab_bar_rect = area;
-    app.editor.tab_bar_rects.clear();
-    app.editor.tab_close_rects.clear();
+    editor.tab_bar_rects.clear();
+    editor.tab_close_rects.clear();
+    editor.new_tab_rect = Rect::default();
 
-    if area.width < 10 {
+    if strip.width < 10 || editor.tabs.is_empty() {
+        editor.tab_bar_rect = Rect::default();
+        editor.header_title_rect = Rect::default();
         return;
     }
+
+    let active = editor.active_tab.min(editor.tabs.len() - 1);
+    let title_focused = focus == EditFocus::Title;
+    let live_title = get_title_text(&editor.title_editor).into_owned();
+    let mut x = strip.x;
+    let end = strip.right();
     // Reserve 4 cols for the `+` button.
-    let mut x = area.x;
-    let end = area.x + area.width;
-    let live_title = get_title_text(&app.editor.title_editor).into_owned();
-    for (i, tab) in app.editor.tabs.iter().enumerate() {
-        let mut label = if tab.title_snapshot.trim().is_empty() {
+    for (i, tab) in editor.tabs.iter().enumerate() {
+        let is_active = i == active;
+        let mut label = if is_active && !live_title.trim().is_empty() {
+            live_title.clone()
+        } else if tab.title_snapshot.trim().is_empty() {
             "Untitled".to_string()
         } else {
             tab.title_snapshot.clone()
         };
-        // Reflect in-progress title edits on the active tab.
-        if i == app.editor.active_tab && !live_title.trim().is_empty() {
-            label = live_title.clone();
-        }
         if label.chars().count() > 14 {
             label = format!("{}…", label.chars().take(13).collect::<String>());
         }
-        let dirty = i == app.editor.active_tab
-            && !matches!(
-                app.editor.autosave_status,
-                crate::editor::AutosaveStatus::Saved
-            );
+        // Single save indicator: the active tab only. The old separate
+        // title row (and its duplicate ⨯/✓) no longer exists.
+        let dirty =
+            is_active && !matches!(editor.autosave_status, crate::editor::AutosaveStatus::Saved);
         let marker = if dirty { "●" } else { " " };
         // Trailing `×` closes the tab with one click (or middle-click).
         let text = format!(" {label}{marker} × ");
-        let w = (text.width() as u16).min(end.saturating_sub(x));
+        let natural_w = text.width() as u16;
+        let avail = end.saturating_sub(x);
+        // The edited title takes the remaining strip while focused.
+        let mut w = natural_w.min(avail);
+        if is_active && title_focused {
+            w = avail.saturating_sub(4).max(w);
+        }
         if w < 6 {
             break;
         }
-        let rect = Rect::new(x, area.y, w, 1);
-        let style = if i == app.editor.active_tab {
+        let rect = Rect::new(x, strip.y, w, 1);
+        let style = if is_active {
             Style::default().fg(theme.highlight_fg).bg(theme.accent)
         } else {
             Style::default().fg(theme.muted)
         };
-        frame.render_widget(Paragraph::new(text).style(style), rect);
-        app.editor.tab_bar_rects.push(rect);
-        app.editor
+        if is_active && title_focused {
+            // Leave the trailing `● × ` suffix visible so the save state
+            // and the close affordance match unfocused tabs.
+            let suffix = format!("{marker} × ");
+            let suffix_w = suffix.width() as u16;
+            let edit_rect = Rect::new(rect.x, rect.y, rect.width.saturating_sub(suffix_w), 1);
+            editor
+                .title_editor
+                .set_style(Style::default().fg(theme.highlight_fg).bg(theme.accent));
+            editor.title_editor.set_block(
+                Block::default()
+                    .style(Style::default().bg(theme.accent))
+                    .borders(Borders::NONE),
+            );
+            editor
+                .title_editor
+                .set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
+            editor.title_editor.set_cursor_line_style(Style::default());
+            frame.render_widget(&editor.title_editor, edit_rect);
+            frame.render_widget(
+                Paragraph::new(suffix).style(style),
+                Rect::new(edit_rect.right(), rect.y, suffix_w, 1),
+            );
+            let (r, c) = crate::ui::refresh_textarea_viewport(
+                &editor.title_editor,
+                editor.title_viewport_row,
+                editor.title_viewport_col,
+                edit_rect,
+                false,
+            );
+            editor.title_viewport_row = r;
+            editor.title_viewport_col = c;
+        } else {
+            frame.render_widget(Paragraph::new(text).style(style), rect);
+        }
+        editor.tab_bar_rects.push(rect);
+        editor
             .tab_close_rects
-            .push(Rect::new(rect.right().saturating_sub(3), area.y, 3, 1));
+            .push(Rect::new(rect.right().saturating_sub(3), strip.y, 3, 1));
+        if is_active {
+            editor.header_title_rect = rect;
+        }
         x += w;
         if x >= end.saturating_sub(5) {
             break;
         }
     }
+    // Clicks on the status segments fall through (outside the tab strip).
+    editor.tab_bar_rect = Rect::new(strip.x, strip.y, x.saturating_sub(strip.x), 1);
     if end.saturating_sub(x) >= 4 {
-        let rect = Rect::new(end - 4, area.y, 4, 1);
+        let rect = Rect::new(end - 4, strip.y, 4, 1);
         frame.render_widget(
             Paragraph::new(" + ").style(Style::default().fg(theme.accent)),
             rect,
         );
-        app.editor.new_tab_rect = rect;
+        editor.new_tab_rect = rect;
+        editor.tab_bar_rect = editor.tab_bar_rect.union(rect);
     } else {
-        app.editor.new_tab_rect = Rect::default();
+        editor.new_tab_rect = Rect::default();
     }
 }
 

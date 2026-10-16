@@ -484,9 +484,12 @@ pub fn compute_edit_layout(
 
     // Carve out the left file-tree pane first so it can coexist with
     // the right outline/links sidebar or the markdown preview.
+    // Relative width (22% of the editor area) so the tree scales with the
+    // terminal instead of pinning a fixed column count; clamped so the
+    // tree stays usable on narrow screens and the editor keeps >=40 cols.
     let (work_area, file_tree, file_tree_splitter) = if file_tree_visible && !fullscreen {
-        let max_allowed = editor_area.width.saturating_sub(40).clamp(18, 28);
-        let tree_w = editor_area.width.clamp(18, max_allowed.max(18));
+        let max_allowed = editor_area.width.saturating_sub(40).clamp(18, 40);
+        let tree_w = ((editor_area.width as u32 * 22 / 100) as u16).clamp(18, max_allowed.max(18));
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -611,20 +614,18 @@ pub fn edit_view_input_areas(
     zen_padding: u16,
     file_tree_visible: bool,
 ) -> (Rect, Rect, Option<Rect>, Option<Rect>) {
-    // Outer vertical split (pad / body / footer) to find the body area.
+    // Outer vertical split (merged header / body / footer) to find the body area.
     // This matches the layout used by draw_edit_view.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // header
-            Constraint::Length(1), // tab bar
-            Constraint::Length(1), // spacer (matches draw_edit_view)
+            Constraint::Length(1), // merged header + tab bar
             Constraint::Min(8),    // body
             Constraint::Length(1), // hint bar
         ])
         .split(area);
 
-    let body_area = chunks[3];
+    let body_area = chunks[1];
 
     let layout = compute_edit_layout(
         body_area,
@@ -670,15 +671,13 @@ pub fn edit_view_md_preview_area(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // header
-            Constraint::Length(1), // tab bar
-            Constraint::Length(1), // spacer (matches draw_edit_view)
+            Constraint::Length(1), // merged header + tab bar
             Constraint::Min(8),    // body
             Constraint::Length(1), // hint bar
         ])
         .split(area);
 
-    let body_area = chunks[3];
+    let body_area = chunks[1];
 
     let layout = compute_edit_layout(
         body_area,

@@ -78,6 +78,13 @@ impl App {
             ) {
                 Ok(state) => {
                     self.graph_plugin = Some(state);
+                    if self.config.graf.semantic.enabled {
+                        // The similarity edges arrive from a background job;
+                        // say so up front instead of leaving a bare graph.
+                        self.set_temporary_status_static(
+                            "Semantic overlay warming up in background…",
+                        );
+                    }
                 }
                 Err(_) => {
                     self.set_temporary_status_static("Failed to build graph view");

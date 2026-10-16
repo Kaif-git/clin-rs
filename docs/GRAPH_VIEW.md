@@ -28,10 +28,16 @@ When `[graf.semantic] enabled = true`, clin additionally embeds note text with
 `all-MiniLM-L6-v2` (fastembed ONNX, local only; see `src/semantic.rs`) and merges
 up to `top_k` similarity edges per note (`cosine >= threshold`, skipping pairs
 already linked explicitly) into the `NodeSpec.links` above — so related notes
-cluster even with no `[[wikilink]]`. Vectors cache per vault at
-`.clin/semantic_cache.json`; embedding runs only on graph open/refresh, never
-while typing. `.draw`/`.canvas`/`.clin` notes are skipped. Toggle at runtime with `Shift+E`
-(palette: `settings.semantic_overlay`); deleting a similarity edge hides it for
+cluster even with no `[[wikilink]]`. Vectors cache per vault in the platform
+cache dir (`<cache>/vaults/<hex>/semantic_cache.json` — never in the vault,
+never in the launch directory); embedding runs in a background thread on graph
+open/refresh (never on the UI thread, never while typing) and the edges merge
+into the live graph when ready. `.draw`/`.canvas`/`.clin` notes are skipped.
+Toggle at runtime with `Shift+E` (palette: `settings.semantic_overlay`):
+the cold first enable asks for confirmation (model download ~80MB plus a
+full-vault embed), and toggling off removes the similarity edges live again —
+edges are session-only, your notes are never rewritten, so a stray keypress
+can't damage the library; deleting a similarity edge hides it for
 the session only — refresh restores it, a real `[[link]]` pins it.
 
 ### Hover preview

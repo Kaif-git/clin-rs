@@ -107,8 +107,8 @@ const DEFAULT_EDIT: &[(EditAction, &[&str])] = &[
     (EditAction::ToggleFileTree, &["Ctrl+e"]),
     (EditAction::NewTab, &["Ctrl+n"]),
     (EditAction::CloseTab, &["Ctrl+w"]),
-    (EditAction::NextTab, &["Ctrl+Tab"]),
-    (EditAction::PrevTab, &["Ctrl+Shift+Tab"]),
+    (EditAction::NextTab, &["Alt+Right"]),
+    (EditAction::PrevTab, &["Alt+Left"]),
     (EditAction::PreviewLink, &["Alt+l"]),
     (EditAction::CycleAlignment, &["F9"]),
 ];

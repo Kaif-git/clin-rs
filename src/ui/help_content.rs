@@ -213,7 +213,7 @@ const EDITOR_SUGGESTIONS: &[HelpSuggestion] = &[
     ),
     tip(
         "Note tabs",
-        "The tab bar keeps several notes open. Press {edit:NewTab} for a new note (Markdown, Text, Draw or Canvas), {edit:CloseTab} to close the current tab, and {edit:NextTab} / {edit:PrevTab} to switch. Click a tab to switch or its × to close.",
+        "The header keeps several notes open as tabs. Press {edit:NewTab} for a new note (Markdown, Text, Draw or Canvas), {edit:CloseTab} to close the current tab, and {edit:NextTab} / {edit:PrevTab} to switch. Click a tab to switch (click the active tab to rename it) or its × to close; ● marks unsaved changes.",
     ),
     tip(
         "Linked-note preview",
